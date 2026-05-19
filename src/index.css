@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: Inter, sans-serif;
+  margin: 0;
+  background: hsl(30 30% 98%);
+}
+
+.field {
+  @apply w-full rounded-2xl bg-zinc-100 px-4 py-3 outline-none mb-2;
+}
