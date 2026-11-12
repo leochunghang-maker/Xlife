@@ -22,6 +22,12 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Xlife uses the camera so you can snap memories, meals, and purchases.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Xlife lets you pick photos from your library to save as memories, meals, or purchases.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Xlife can save photos you take to your photo library.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
