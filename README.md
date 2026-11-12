@@ -1,102 +1,88 @@
 # Xlife
 
-Xlife is an AI-ready lifestyle management app built for mobile-first daily tracking. It combines health, meals, snaps, fitness, entertainment, spending, memories, and couple connection into one personal lifestyle hub.
+Xlife is a mobile-first lifestyle companion for iPhone. It covers daily logs, meals, camera-first photo memories, spending, gym workouts, sleep, cycle tracking, and a couple space. It's built with React + Vite + Tailwind and packaged for iOS with Capacitor.
 
-## Overview
+> **Status: working prototype, local-only.** All data is stored on the device in `localStorage`. There's no cloud backend, AI model, real partner sync, or Apple Health integration yet. Those are planned, and this README marks each one as planned. See [`docs/BACKLOG.md`](docs/BACKLOG.md) for the detailed status, prioritized backlog, and cloud migration plan.
 
-Xlife is designed as a full-stack wellness and relationship companion. The current version is a React + Vite + Tailwind prototype wrapped with Capacitor for iOS deployment. It supports local device storage now and is structured for future Supabase cloud sync, Apple Health integration, and real OpenAI-powered intelligence.
+## What works today
 
-## Core Features
+- **Camera-first Snaps.** The app opens on Snaps after sign-in. You take a photo with the native iOS camera (`@capacitor/camera`) or pick one from the gallery. You then choose one of three options:
+  - **Save Memory**: caption it. It shows on Home and in Fun → Us → Memories.
+  - **Mark Food**: meal type, food, calories, protein, sugar, cost, a 5-star rating, and notes, all entered by you.
+  - **Track Spending**: item, amount, category, merchant, and notes.
+- **Home dashboard**: calories, protein, and sugar progress, mood, daily notes, today's snaps, sleep, and an "Are you awake?" wake-up confirmation.
+- **Day calendar**: pick any date to see that day's meals, sleep, mood and notes, workout, snaps, cycle, and spending. Each day's log is archived under its own date.
+- **Meals**: manual meal logging and a personal restaurant catalog (add, search, filter by cuisine, save, reject). "Smart pick" suggestions are ranked on the phone from your own history.
+- **GYM**: Chest, Back, Shoulder/Arm, Chest/Back, Leg, and Rest splits. You log weight and reps per exercise, then Done Workout saves history and remembers your last values.
+- **Health**: cycle logging (period, symptoms, spotting, factors, notes) with a calendar, plus wellness insights computed from your own logs.
+- **Us (Fun)**: a plan builder with multiple-choice blocks and a final plan, plus a memories feed (on one phone).
 
-### Camera-First Snaps
-- Snapchat-style camera-first launch experience
-- Capture or upload photos
-- Route each snap into one of three flows:
-  - Save Memory
-  - Mark Food
-  - Track Spending
-- Food snaps connect to meal tracking
-- Spending snaps connect to personal expense logs
+## Prototype / mock (clearly labelled in the app)
 
-### Meals & Restaurant Catalog
-- Daily meal logging by breakfast, lunch, dinner, and snack
-- AI-ready food photo calorie estimation flow
-- Restaurant catalog with cuisine categories
-- Nearby restaurant suggestion architecture
-- Personal restaurant notes, ratings, takeaway number, and menu/photo storage
+- Account sign-in is local only. It isn't real authentication, and no password is stored.
+- Partner pairing, the partner updates feed, and "Send to partner" are a local demo. Nothing leaves the phone.
+- Entertainment headlines and date ideas are static samples.
+- Restaurant fallback ideas are samples, not real businesses.
 
-### Health & Cycle Tracking
-- Apple Health-style cycle tracking interface
-- Period marking by selected date
-- Symptoms, spotting, factors, and notes
-- Wellness insights structure for phase-based mood and symptom analysis
-- Future-ready Apple HealthKit sleep sync architecture
+## Planned integrations
 
-### GYM Tracker
-- Workout split selection:
-  - Chest
-  - Back
-  - Shoulder/Arm
-  - Chest/Back
-  - Leg
-  - Rest
-- Exercise checklist with weight and reps
-- Workout completion summary
-- Encouraging completion feedback
-- Local workout history persistence
+| Integration | Purpose |
+|---|---|
+| Supabase Auth + Postgres + RLS | Real accounts, cloud sync, secure couple pairing |
+| Supabase Storage | Cloud photo storage |
+| OpenAI (via server-side Edge Functions only) | Food photo recognition, nutrition estimates, recommendations, date planning |
+| Places provider (Google Places / Yelp) | Real nearby restaurants |
+| Apple HealthKit | Optional sleep import |
 
-### Fun / Us / Entertainment
-- Shared couple space concept: Us
-- Partner invite and pairing mock flow
-- Partner updates feed architecture
-- Collaborative plan builder
-- Memories section for shared moments
-- Entertainment discovery section with category tabs for movies, shows, and music
+## Architecture
 
-### Daily Dashboard
-- Today summary
-- Calories and nutrition overview
-- Wake/sleep tracking architecture
-- Mood and notes
-- Snaps preview
-- Interactive Day Calendar for selected-date log review
+```
+src/
+  App.jsx          # app shell, 5 tabs (Home, Meals, Snaps, Fun, Health), feature components
+  lib/storage.js   # safe localStorage read/write, local-date helpers, storage-full events
+  lib/photos.js    # native camera/gallery capture + JPEG compression to persistent data URLs
+  lib/supabase.js  # Supabase client + future sync helpers (not wired up yet)
+ios/               # Capacitor iOS project (bundle id com.xlife.app, display name Xlife)
+docs/BACKLOG.md    # status, backlog, storage key inventory, cloud migration plan
+```
 
-## Tech Stack
+State lives in `AppShell` (today's log) and per-feature components, and is persisted to `localStorage`. The existing `dayflow_*` storage keys are deliberately kept from the app's original name ("Dayflow") so data on installed phones survives upgrades. See the key inventory in the backlog.
 
-- Frontend: React, Vite
-- Styling: Tailwind CSS
-- Mobile Wrapper: Capacitor iOS
-- Animations: Framer Motion
-- Icons: Lucide React
-- Storage: localStorage now; Supabase-ready architecture
-- Future AI: OpenAI Vision / GPT through backend or Supabase Edge Functions
-- Future Health Integration: Apple HealthKit
+## Tech stack
 
-## Why This Project Matters
+React 19 · Vite · Tailwind CSS 3 · Framer Motion · Lucide icons · Capacitor 8 (iOS, Swift Package Manager) · `@capacitor/camera` · Supabase JS (scaffold)
 
-Xlife demonstrates product thinking, mobile-first UI design, React state management, native iOS deployment through Capacitor, and AI-ready feature architecture. It is built as a realistic consumer lifestyle app rather than a simple demo.
+## Getting started
 
-## Planned Improvements
+```bash
+npm install
+npm run dev        # web dev server (the camera falls back to the browser file picker)
+npm run lint
+npm run build
+```
 
-- Supabase Auth and cloud database
-- Real partner account pairing and shared data sync
-- OpenAI Vision food estimation through secure backend
-- Apple HealthKit sleep and wellness data sync
-- Real restaurant search using Google Places or Yelp API
-- Push notifications
-- TestFlight distribution
-- App Store release
+### iOS
 
-## Local Development
+```bash
+npm run build
+npx cap sync ios   # copies the web build and links native plugins (Camera)
+npx cap open ios   # then select your team/device in Xcode and Run
+```
 
-bash npm install npm run dev 
+Requirements: macOS with Xcode, plus an Apple developer account for installing on a physical iPhone.
 
-## Build for iOS with Capacitor
+### Environment
 
-bash npm run build npx cap sync ios npx cap open ios 
+Copy `.env.example` to `.env` when Supabase is set up. Only the public anon key belongs in `VITE_` variables. Never put service-role or OpenAI keys in client code. `.env` files are git-ignored.
 
-Then open the project in Xcode and run it on an iPhone.
+## Roadmap
 
-## Portfolio Summary
+1. Photo storage in the device filesystem (removes the localStorage size limit)
+2. Supabase auth, profiles, and safe migration of local data
+3. Real two-phone couple pairing with per-category sharing controls
+4. Server-side AI food recognition (results shown as estimates)
+5. Nearby restaurant search, then HealthKit sleep, then TestFlight
 
-Xlife is an AI-ready mobile lifestyle OS for daily wellness, food, fitness, memories, spending, entertainment, and couple connection. The app combines personal tracking and social relationship features into a single mobile-first React + Capacitor product.
+## Privacy
+
+Personal photos, health data, and environment files must never be committed. Cycle, intimacy, and journal data are intended to stay private by default when sharing is built.
