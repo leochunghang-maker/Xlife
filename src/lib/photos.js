@@ -1,11 +1,13 @@
 // Photo capture + persistence helpers.
 //
-// Photos are stored as compressed JPEG data URLs so they survive app restarts.
+// Photos are compressed to JPEG and saved in the photo store (see photoStore.js);
+// callers receive a durable reference that survives app restarts.
 // Never persist blob: URLs or native temporary file paths (webPath/uri from the
 // camera plugin): those stop working after the app is relaunched.
 
 import { Capacitor } from "@capacitor/core";
 import { Camera, CameraDirection } from "@capacitor/camera";
+import { persistPhoto } from "./photoStore";
 
 const MAX_DIMENSION = 1280;
 const JPEG_QUALITY = 0.72;
@@ -51,7 +53,13 @@ export async function compressImage(src, { maxDimension = MAX_DIMENSION, quality
   return canvas.toDataURL("image/jpeg", quality);
 }
 
+// Returns a photo-store reference (or the inline data URL if the store is
+// unavailable). Render it with <StoredImage>.
 export async function fileToPersistentDataUrl(file) {
+  return persistPhoto(await fileToDataUrl(file));
+}
+
+async function fileToDataUrl(file) {
   const objectUrl = URL.createObjectURL(file);
   try {
     return await compressImage(objectUrl);
@@ -109,7 +117,7 @@ export async function captureNativePhoto({ facing = "rear" } = {}) {
       saveToGallery: false,
       presentationStyle: "fullscreen",
     });
-    return await mediaResultToPersistentDataUrl(result);
+    return await persistPhoto(await mediaResultToPersistentDataUrl(result));
   } catch (error) {
     if (isUserCancellation(error)) return null;
     throw error;
@@ -128,7 +136,7 @@ export async function chooseNativePhoto() {
       presentationStyle: "fullscreen",
     });
     if (!results?.length) return null;
-    return await mediaResultToPersistentDataUrl(results[0]);
+    return await persistPhoto(await mediaResultToPersistentDataUrl(results[0]));
   } catch (error) {
     if (isUserCancellation(error)) return null;
     throw error;

@@ -1,0 +1,5 @@
+# Minimal Supabase CLI config for Xlife. See docs/SETUP.md.
+project_id = "xlife"
+
+[functions.estimate-nutrition]
+verify_jwt = true

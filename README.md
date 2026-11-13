@@ -1,88 +1,119 @@
 # Xlife
 
-Xlife is a mobile-first lifestyle companion for iPhone. It covers daily logs, meals, camera-first photo memories, spending, gym workouts, sleep, cycle tracking, and a couple space. It's built with React + Vite + Tailwind and packaged for iOS with Capacitor.
+Xlife is a mobile-first lifestyle companion for iPhone. It covers daily logs, meals, camera-first photo memories, spending, gym workouts, sleep, cycle tracking, journaling, and a couple space. It's built with React + Vite + Tailwind and packaged for iOS with Capacitor.
 
-> **Status: working prototype, local-only.** All data is stored on the device in `localStorage`. There's no cloud backend, AI model, real partner sync, or Apple Health integration yet. Those are planned, and this README marks each one as planned. See [`docs/BACKLOG.md`](docs/BACKLOG.md) for the detailed status, prioritized backlog, and cloud migration plan.
+> **Status: working app, local-first.** Out of the box, everything is stored on the phone: records in `localStorage`, photos in the app's private files (IndexedDB on the web). **Xlife Cloud** (Supabase accounts, backup, real partner pairing, photo storage) and **AI food-photo estimates** are fully coded but switched off until you configure them. See [`docs/SETUP.md`](docs/SETUP.md). The detailed status and backlog are in [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
-## What works today
+## Features
 
-- **Camera-first Snaps.** The app opens on Snaps after sign-in. You take a photo with the native iOS camera (`@capacitor/camera`) or pick one from the gallery. You then choose one of three options:
-  - **Save Memory**: caption it. It shows on Home and in Fun → Us → Memories.
-  - **Mark Food**: meal type, food, calories, protein, sugar, cost, a 5-star rating, and notes, all entered by you.
-  - **Track Spending**: item, amount, category, merchant, and notes.
-- **Home dashboard**: calories, protein, and sugar progress, mood, daily notes, today's snaps, sleep, and an "Are you awake?" wake-up confirmation.
-- **Day calendar**: pick any date to see that day's meals, sleep, mood and notes, workout, snaps, cycle, and spending. Each day's log is archived under its own date.
-- **Meals**: manual meal logging and a personal restaurant catalog (add, search, filter by cuisine, save, reject). "Smart pick" suggestions are ranked on the phone from your own history.
-- **GYM**: Chest, Back, Shoulder/Arm, Chest/Back, Leg, and Rest splits. You log weight and reps per exercise, then Done Workout saves history and remembers your last values.
-- **Health**: cycle logging (period, symptoms, spotting, factors, notes) with a calendar, plus wellness insights computed from your own logs.
-- **Us (Fun)**: a plan builder with multiple-choice blocks and a final plan, plus a memories feed (on one phone).
+- **Camera-first Snaps.** Take a photo (native iOS camera) or pick one from the gallery, then:
+  - **Save Memory** with a caption. A memory streak is shown.
+  - **Mark Food**.
+  - **Track Spending**.
+- **Home**:
+  - Calories, protein, and sugar.
+  - Real 7-day nutrition averages.
+  - Mood.
+  - **Journal** with a daily reflection prompt and your notes from one week, one month, and one year ago ("on this day").
+  - Today's snaps and "On this day" memories.
+  - Sleep, and an "Are you awake?" prompt that follows your preferred wake-up time.
+  - A day calendar for every past day.
+- **Meals**:
+  - Manual logging.
+  - **Quick add**: your most-logged meals, plus starred **My foods**.
+  - **Barcode lookup** using Open Food Facts open data. Scan on iPhone, or type the number.
+  - A restaurant catalog. The sample entries are labelled and never come back once you delete them.
+  - Optional AI photo estimates, when configured.
+- **GYM**:
+  - Splits with **multiple sets** per exercise.
+  - Your **previous** values from the last session.
+  - A **rest timer** that starts when you tick a set, with an optional notification.
+  - **🏆 PR badges** (best weight or estimated 1RM).
+  - A completion summary.
+  - **CSV export**.
+- **Health**:
+  - Cycle logging.
+  - **Estimates learned from your own logged periods**: next period, the fertile window, average cycle and period length, and late or irregular notes. These are always labelled as estimates.
+  - Opt-in reminders.
+  - A **12-month cycle report** you can print or save as a PDF for a doctor.
+  - Wellness insights.
+- **Us (Fun)**:
+  - A **Together** card with days together, the next anniversary, and countdowns.
+  - A **question of the day**.
+  - Plan builder.
+  - Memories.
+  - When paired through Xlife Cloud: a real partner feed that shows only the categories your partner chose to share.
+- **Settings** (gear icon):
+  - Face ID / passcode **app lock**.
+  - Daily journal reminder.
+  - **What your partner can see**, set per category. Health, intimacy, journal, sleep, spending, and mood are private by default.
+  - Xlife Cloud account, backup, restore, and pairing.
 
-## Prototype / mock (clearly labelled in the app)
+## Clearly labelled demo or sample content
 
-- Account sign-in is local only. It isn't real authentication, and no password is stored.
-- Partner pairing, the partner updates feed, and "Send to partner" are a local demo. Nothing leaves the phone.
-- Entertainment headlines and date ideas are static samples.
-- Restaurant fallback ideas are samples, not real businesses.
+- In local-only mode, "Preview with demo partner" is a labelled local demo. It is saved until you end it.
+- Entertainment headlines and the built-in date ideas are static samples. "Sample" restaurant fallback ideas are not real businesses.
+- In local-only mode, sign-in checks only the profile saved on the phone (no password). Use the Face ID lock to protect the app. With Xlife Cloud configured, sign-in uses real Supabase email and password authentication.
 
-## Planned integrations
+## Not built (documented integrations)
 
-| Integration | Purpose |
+| Integration | Why not yet |
 |---|---|
-| Supabase Auth + Postgres + RLS | Real accounts, cloud sync, secure couple pairing |
-| Supabase Storage | Cloud photo storage |
-| OpenAI (via server-side Edge Functions only) | Food photo recognition, nutrition estimates, recommendations, date planning |
-| Places provider (Google Places / Yelp) | Real nearby restaurants |
-| Apple HealthKit | Optional sleep import |
+| Nearby restaurant search | Needs a paid or keyed place-data provider (Google Places, Yelp, Foursquare). Xlife doesn't invent restaurants. |
+| Live entertainment / news | Needs a licensed data source. |
+| Apple HealthKit sleep import | Needs a native HealthKit plugin, entitlement, and an on-device test. |
+| iOS home-screen widgets | Needs a native WidgetKit extension and an App Group (Xcode work that can't be verified without a Mac). |
 
 ## Architecture
 
 ```
 src/
-  App.jsx          # app shell, 5 tabs (Home, Meals, Snaps, Fun, Health), feature components
-  lib/storage.js   # safe localStorage read/write, local-date helpers, storage-full events
-  lib/photos.js    # native camera/gallery capture + JPEG compression to persistent data URLs
-  lib/supabase.js  # Supabase client + future sync helpers (not wired up yet)
-ios/               # Capacitor iOS project (bundle id com.xlife.app, display name Xlife)
-docs/BACKLOG.md    # status, backlog, storage key inventory, cloud migration plan
+  App.jsx                 # auth gate + Face ID lock gate
+  main.jsx                # one-time photo migration, then render
+  components/             # ui primitives, StoredImage, AppLockGate
+  features/               # one file per screen/feature (AppShell, Dashboard, Meals, Snaps,
+                          # Gym, Health, CycleInsights, Entertainment, Together, DailyQuestion,
+                          # Journal, Settings, CloudSettings, PartnerFeed, MealTools, Onboarding, Sleep)
+  lib/
+    storage.js            # safe localStorage, local dates, ids, storage-full events
+    photoStore.js         # photos in Filesystem (iOS) / IndexedDB (web) + migration
+    dailyLog.js dates.js  # day log, rollover, history
+    gym.js cycle.js cyclePredict.js journal.js couple.js dailyQuestion.js foodData.js
+    notifications.js appLock.js privacy.js exportFile.js dirtyForms.js
+    supabase.js cloud.js cloudAuto.js ai.js   # cloud + AI (off unless configured)
+supabase/
+  migrations/             # Postgres schema + Row Level Security + storage policies
+  functions/estimate-nutrition/  # Edge Function (OpenAI key lives only here as a secret)
+  tests/                  # RLS smoke test (embedded Postgres, no Docker)
+ios/                      # Capacitor iOS project (bundle id com.xlife.app)
+docs/SETUP.md docs/BACKLOG.md
 ```
 
-State lives in `AppShell` (today's log) and per-feature components, and is persisted to `localStorage`. The existing `dayflow_*` storage keys are deliberately kept from the app's original name ("Dayflow") so data on installed phones survives upgrades. See the key inventory in the backlog.
+The original `dayflow_*` storage keys are kept unchanged so data on installed phones survives upgrades. New keys use an `xlife_` prefix (see the key inventory in the backlog).
 
 ## Tech stack
 
-React 19 · Vite · Tailwind CSS 3 · Framer Motion · Lucide icons · Capacitor 8 (iOS, Swift Package Manager) · `@capacitor/camera` · Supabase JS (scaffold)
+React 19 · Vite 8 · Tailwind CSS 3 · Framer Motion · Lucide · Capacitor 8.6 (iOS, Swift Package Manager), with these plugins:
+
+- camera, filesystem, local-notifications, share, barcode-scanner
+- `@capgo/capacitor-native-biometric`
+
+Backend (optional): Supabase JS, Supabase Edge Functions (Deno).
 
 ## Getting started
 
 ```bash
 npm install
-npm run dev        # web dev server (the camera falls back to the browser file picker)
+npm run dev        # web dev server (camera falls back to the browser file picker)
 npm run lint
 npm run build
 ```
 
-### iOS
+iOS: `npm run build && npx cap sync ios && npx cap open ios`, then Run in Xcode. Full steps, including Cloud and AI setup, are in **[docs/SETUP.md](docs/SETUP.md)**.
 
-```bash
-npm run build
-npx cap sync ios   # copies the web build and links native plugins (Camera)
-npx cap open ios   # then select your team/device in Xcode and Run
-```
+## Privacy & security
 
-Requirements: macOS with Xcode, plus an Apple developer account for installing on a physical iPhone.
-
-### Environment
-
-Copy `.env.example` to `.env` when Supabase is set up. Only the public anon key belongs in `VITE_` variables. Never put service-role or OpenAI keys in client code. `.env` files are git-ignored.
-
-## Roadmap
-
-1. Photo storage in the device filesystem (removes the localStorage size limit)
-2. Supabase auth, profiles, and safe migration of local data
-3. Real two-phone couple pairing with per-category sharing controls
-4. Server-side AI food recognition (results shown as estimates)
-5. Nearby restaurant search, then HealthKit sleep, then TestFlight
-
-## Privacy
-
-Personal photos, health data, and environment files must never be committed. Cycle, intimacy, and journal data are intended to stay private by default when sharing is built.
+- Personal photos, health data, and `.env` files are never committed (`.env*` is git-ignored).
+- Only the Supabase **anon** key may go in `VITE_` variables. Row Level Security protects every table. The service-role key and the OpenAI key exist only as Supabase Edge Function secrets.
+- Passwords are never stored by Xlife. With Cloud enabled, Supabase Auth handles them.
+- Partner sharing is opt-in per category and enforced by the database, not just the UI.
