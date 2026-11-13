@@ -230,7 +230,7 @@ function CycleTracker() {
     <div className="space-y-4">
       <SoftCard>
         <div className="mb-5">
-          <p className="text-3xl font-black tracking-tight">{selectedDateTitle}</p>
+          <p className="text-2xl font-black tracking-tight sm:text-3xl">{selectedDateTitle}</p>
           <p className="mt-1 text-sm font-semibold capitalize text-zinc-500">
             Cycle Day {selectedPhase.day} · {selectedPhase.phase}{periodLogs[selectedDate]?.phase === "period" ? "" : " (estimate)"}
           </p>

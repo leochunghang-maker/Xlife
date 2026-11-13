@@ -52,6 +52,11 @@ function rowId(userId, localId) {
   return `${userId}:${localId}`;
 }
 
+// A second session of the same split on one day carries a session_id.
+function workoutKey(w) {
+  return w.session_id ? `${w.date}:${w.type}:${w.session_id}` : `${w.date}:${w.type}`;
+}
+
 function validDate(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }
@@ -103,7 +108,7 @@ export function buildCloudRows(userId) {
     daily_logs: Object.entries(days).filter(([date]) => validDate(date)).map(([date, log]) => ({ id: rowId(userId, date), user_id: userId, date, data: log })),
     journal_entries: Object.entries(days).filter(([date, log]) => validDate(date) && log?.notes).map(([date, log]) => ({ id: rowId(userId, `journal:${date}`), user_id: userId, date, data: { notes: log.notes } })),
     meals: list("dayflow_meal_history").map((meal, index) => ({ id: rowId(userId, meal.id || `meal:${meal.date || ""}:${index}`), user_id: userId, date: validDate(meal.date), data: meal })),
-    workouts: list("dayflow_workout_history").map((w) => ({ id: rowId(userId, `${w.date}:${w.type}`), user_id: userId, date: validDate(w.date), data: w })),
+    workouts: list("dayflow_workout_history").map((w) => ({ id: rowId(userId, workoutKey(w)), user_id: userId, date: validDate(w.date), data: w })),
     spending: list("dayflow_spending").map((s, index) => ({ id: rowId(userId, s.id || `spend:${index}`), user_id: userId, date: validDate(s.date), data: s })),
     sleep_logs: list("dayflow_sleep_history").map((s) => ({ id: rowId(userId, `sleep:${s.date}`), user_id: userId, date: validDate(s.date), data: s })),
     period_logs: Object.entries(periodLogs && typeof periodLogs === "object" ? periodLogs : {}).filter(([date]) => validDate(date)).map(([date, entry]) => ({ id: rowId(userId, `period:${date}`), user_id: userId, date, data: entry })),
@@ -193,7 +198,7 @@ export async function restoreFromCloud({ onProgress } = {}) {
 
   const simple = [
     ["meals", "dayflow_meal_history", (m) => m.id || `${m.date}:${m.name}`],
-    ["workouts", "dayflow_workout_history", (w) => `${w.date}:${w.type}`],
+    ["workouts", "dayflow_workout_history", workoutKey],
     ["spending", "dayflow_spending", (s) => s.id || `${s.date}:${s.item_name}:${s.amount}`],
     ["sleep_logs", "dayflow_sleep_history", (s) => s.date],
     ["intimacy_logs", "dayflow_intimacy_logs", (e) => e.id || e.date],

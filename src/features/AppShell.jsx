@@ -145,10 +145,17 @@ export function AppShell({ user, onLogout }) {
     "/health": "Health",
   }[route];
 
+  // Snaps is a full-screen black camera surface with no header (local-latest).
+  const isSnapsRoute = route === "/snaps";
+
   return (
-    <div className="min-h-screen bg-[hsl(30_30%_98%)] text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50 font-sans">
-      <div className="mx-auto max-w-2xl min-h-screen pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
-        <header className="sticky top-0 z-30 backdrop-blur-xl bg-[hsl(30_30%_98%)]/85 dark:bg-zinc-950/80 px-5 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] flex items-center justify-between">
+    <div className="min-h-screen overflow-x-hidden bg-[hsl(30_30%_98%)] text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50 font-sans">
+      <div className={classNames(
+        "mx-auto min-h-screen w-full max-w-2xl",
+        isSnapsRoute ? "overflow-hidden bg-black" : "pb-[calc(6.5rem+env(safe-area-inset-bottom))]"
+      )}>
+        {isSnapsRoute && <h1 className="sr-only">{pageTitle}</h1>}
+        {!isSnapsRoute && <header className="sticky top-0 z-30 backdrop-blur-xl bg-[hsl(30_30%_98%)]/85 dark:bg-zinc-950/80 px-5 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.25em] text-zinc-400">
               {user?.name ? `hi, ${user.name.split(" ")[0]}` : "personal lifestyle"}
@@ -161,8 +168,9 @@ export function AppShell({ user, onLogout }) {
           <Button variant="ghost" size="icon" className="rounded-2xl" onClick={() => setSettingsFocus("top")} aria-label="Settings">
             <SettingsIcon className="h-5 w-5" />
           </Button>
-        </header>
+        </header>}
 
+        <div className={isSnapsRoute ? "fixed inset-x-0 top-[calc(env(safe-area-inset-top)+4rem)] z-40 mx-auto max-w-2xl" : ""}>
         {storageWarning && (
           <div className="mx-4 mb-3 flex items-start gap-3 rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-200" role="alert">
             <p className="flex-1">{storageWarning}</p>
@@ -176,8 +184,9 @@ export function AppShell({ user, onLogout }) {
             <Button size="sm" variant="secondary" className="shrink-0 rounded-2xl" onClick={() => window.location.reload()}>Start new day</Button>
           </div>
         )}
+        </div>
 
-        <main className="px-4 space-y-4">
+        <main className={isSnapsRoute ? "h-[100dvh] overflow-hidden bg-black" : "space-y-4 px-4 pb-4"}>
           {route === "/" && (
             <Dashboard
               log={log}

@@ -123,8 +123,12 @@ export function Onboarding({ onAuthenticated }) {
   }
 
   function savePreferences() {
-    const savedUser = createdUser || readLocalJSON("dayflow_user", null);
-    if (!savedUser) return;
+    const storedUser = createdUser || readLocalJSON("dayflow_user", null);
+    if (!storedUser) return;
+    // relationship_mode is also kept on the profile (local-latest).
+    const savedUser = { ...storedUser, relationship_mode: preferences.relationship_mode };
+    writeLocalJSON("dayflow_user", savedUser);
+    setCreatedUser(savedUser);
 
     writeLocalJSON("dayflow_user_preferences", {
       ...preferences,
@@ -169,14 +173,14 @@ export function Onboarding({ onAuthenticated }) {
   }
 
   return (
-    <div className="min-h-screen bg-[hsl(30_30%_98%)] px-4 py-6 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
+    <div className="safe-bottom safe-top min-h-screen overflow-x-hidden bg-[hsl(30_30%_98%)] px-4 py-6 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-2xl flex-col justify-center">
         <div className="rounded-[2rem] bg-white p-5 shadow-sm dark:bg-zinc-900">
           {screen === "welcome" && (
             <div className="space-y-5">
               <div className="rounded-[2rem] bg-gradient-to-br from-orange-100 via-white to-teal-50 p-5 dark:from-zinc-800 dark:via-zinc-900 dark:to-zinc-800">
                 <p className="text-xs font-black uppercase tracking-[0.28em] text-[hsl(24_80%_58%)]">welcome to</p>
-                <h1 className="mt-2 text-5xl font-black tracking-tight">Xlife</h1>
+                <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-5xl">Xlife</h1>
                 <p className="mt-3 text-base font-semibold text-zinc-600 dark:text-zinc-300">
                   Your daily life, health, memories, and relationship — all in one flow.
                 </p>
@@ -209,7 +213,7 @@ export function Onboarding({ onAuthenticated }) {
           {screen === "create" && (
             <div className="space-y-3">
               <div>
-                <p className="text-3xl font-black">Create account</p>
+                <p className="text-2xl font-black sm:text-3xl">Create account</p>
                 <p className="mt-1 text-sm text-zinc-500">Start your personal Xlife space.</p>
               </div>
               <div className="rounded-3xl bg-[hsl(30_30%_98%)] p-4 text-center text-sm font-semibold text-zinc-500 dark:bg-zinc-800">
@@ -247,7 +251,7 @@ export function Onboarding({ onAuthenticated }) {
           {screen === "signin" && (
             <div className="space-y-3">
               <div>
-                <p className="text-3xl font-black">Welcome back</p>
+                <p className="text-2xl font-black sm:text-3xl">Welcome back</p>
                 <p className="mt-1 text-sm text-zinc-500">Sign in to your saved Xlife profile on this phone.</p>
               </div>
               <input className="field" placeholder="Email" type="email" value={signInForm.email} onChange={(e) => setSignInForm({ ...signInForm, email: e.target.value })} />
@@ -265,7 +269,7 @@ export function Onboarding({ onAuthenticated }) {
           {screen === "profile" && (
             <div className="space-y-3">
               <div>
-                <p className="text-3xl font-black">Set your flow</p>
+                <p className="text-2xl font-black sm:text-3xl">Set your flow</p>
                 <p className="mt-1 text-sm text-zinc-500">A few preferences make Xlife feel more like you.</p>
               </div>
               <input className="field" placeholder="Daily calorie goal" type="number" value={preferences.daily_calorie_goal} onChange={(e) => setPreferences({ ...preferences, daily_calorie_goal: e.target.value })} />
@@ -319,7 +323,7 @@ export function Onboarding({ onAuthenticated }) {
           {screen === "partner" && (
             <div className="space-y-4">
               <div>
-                <p className="text-3xl font-black">Connect with your partner</p>
+                <p className="text-2xl font-black sm:text-3xl">Connect with your partner</p>
                 <p className="mt-1 text-sm text-zinc-500">{isSupabaseConfigured ? "After setup, pair for real in Settings → Xlife Cloud (invite codes work across phones). Codes below are saved on this phone only." : "Real pairing between two phones needs Xlife Cloud, which isn't configured in this build. Codes are saved on this phone only."}</p>
               </div>
               <Button onClick={generateInviteCode} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-4 text-white">

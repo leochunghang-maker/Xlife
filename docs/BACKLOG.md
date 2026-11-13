@@ -53,6 +53,15 @@ device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
   - `supabase/functions/estimate-nutrition` (type-checked with Deno).
   - Client code behind flags.
 
+## 2b. Merged from local-latest (~/dayflow, integration branch)
+- Xlife app icon, Xcode team/display name/category, xcworkspace + Package.resolved, location usage strings, `@capacitor/geolocation`.
+- Full-screen black Snaps with a review step (Save Memory / Mark Food / Track Spending / Retake) and no header on Snaps.
+- Gym completion: encouragement, logged exercises, completed time, Start another workout.
+- Us: Invite Partner / Copy Code / Share Invite / Enter Partner Code / Disconnect (`xlife_partner_connection`), wired to real invite codes when Xlife Cloud is on.
+- Meals: location input + Use My Location → Apple/Google Maps (the local build's made-up nearby restaurants, ratings and distances were not kept).
+- Snaps food: the local build's fixed "Grilled chicken rice bowl" AI estimate was replaced by the real AI function (when configured) or manual entry.
+- Cloud session restore on launch + Xlife loading screen; safe-area and dark-mode input fixes.
+
 ## 3. Backlog (what's left)
 
 ### Needs you (credentials / device)
@@ -132,14 +141,15 @@ Researched on 2026-11-12. Effort: S is under a day, M is 2–5 days, L is 1–3 
 | `dayflow_user` | profile object (no password) | Onboarding |
 | `dayflow_active_session` | `"true"`/`"false"` | Onboarding, App |
 | `dayflow_user_preferences` | goals, cuisines, relationship mode | Onboarding |
-| `dayflow_partner_connection` | invite code (local only) | Onboarding |
+| `dayflow_partner_connection` | invite code (local only), read by the Us card as a pending invite; never deleted | Onboarding |
+| `xlife_partner_connection` | partner invite/connection `{ inviteCode, status: invite_created/connected, partnerName, cloud/local, … }`; `{ status: "none" }` after disconnect | Us (from local-latest) |
 | `dayflow_log` | **today's** working log | AppShell |
 | `dayflow_daily_logs` | `{ [YYYY-MM-DD]: log }` archive (new writer in this pass) | AppShell rollover |
 | `dayflow_meal_history` | meal array (no photos for new snap meals) | Meals, Snaps |
 | `dayflow_restaurants` | restaurant array | Meals |
 | `dayflow_rejected_food_suggestions`, `dayflow_saved_food_suggestions` | arrays | Meals |
 | `dayflow_spending` | spending array | Snaps |
-| `dayflow_workout_history`, `dayflow_workout_<Type>` | array / last values per type | GYM |
+| `dayflow_workout_history`, `dayflow_workout_<Type>` | array / last values per type; entries from "Start another workout" carry `session_id` | GYM |
 | `dayflow_sleep_history` | array, one per date | Sleep |
 | `dayflow_last_active_at`, `dayflow_wake_prompt_snoozed_at` | ISO timestamps | Wake prompt |
 | `dayflow_cycle_start`, `dayflow_period_logs`, `dayflow_intimacy_logs` | cycle data | Health |
@@ -166,7 +176,7 @@ Shapes extended without renaming anything:
 - Exercise entries gain `sets[]`. The legacy `weight`/`reps`/`done` fields are kept and mirror set 1.
 - Restaurants gain `is_sample`. Legacy sample copies are tagged by name and notes on load.
 
-The handover mentions `xlife_partner_connection`. This repository uses `dayflow_partner_connection`.
+`xlife_partner_connection` (local-latest) and `dayflow_partner_connection` (onboarding) are both kept and read.
 If the local `~/dayflow` copy uses the `xlife_` key, reconcile the two before merging.
 
 ## 6. Cloud architecture (implemented, disabled until configured)

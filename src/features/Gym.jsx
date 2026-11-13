@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Dumbbell, Plus, Trash2, Download, Timer } from "lucide-react";
-import { readLocalJSON, writeLocalJSON } from "../lib/storage";
+import { readLocalJSON, writeLocalJSON, createId } from "../lib/storage";
 import { Button, SoftCard, SectionTitle } from "../components/ui.jsx";
 import { todayISO } from "../lib/dates";
 import { classNames, nowMs } from "../lib/utils";
-import { getSets, isExerciseDone, summarizeWorkout, readWorkoutHistory, previousSetsFor, personalBests, isPersonalRecord, workoutHistoryCsv, readRestSeconds, REST_SECONDS_KEY } from "../lib/gym";
+import { getSets, doneSets, isExerciseDone, summarizeWorkout, readWorkoutHistory, previousSetsFor, personalBests, isPersonalRecord, workoutHistoryCsv, readRestSeconds, REST_SECONDS_KEY } from "../lib/gym";
 import { exportTextFile } from "../lib/exportFile";
 import { scheduleRestDone, cancelRestDone, readReminders, saveReminders, ensurePermission, notificationsSupported } from "../lib/notifications";
 import { SummaryPill } from "./Dashboard.jsx";
@@ -325,6 +325,15 @@ function WorkoutTools() {
   );
 }
 
+// Encouragements from local-latest; one is picked when the workout is saved.
+const ENCOURAGEMENTS = [
+  "Strong work — consistency builds the body you want.",
+  "You showed up today. That’s the win.",
+  "Great session. Your future self will thank you.",
+  "Another step stronger.",
+  "Discipline logged. Keep going.",
+];
+
 export function Gym({ log, setLog }) {
   const [error, setError] = useState("");
   const completed = log.workout?.completed_at ? log.workout : null;
@@ -337,13 +346,17 @@ export function Gym({ log, setLog }) {
   function doneWorkout() {
     const type = log.workout?.type || "Chest";
     const exercises = log.workout?.exercises || {};
-    const summary = summarizeWorkout(exercises);
+    const summary = {
+      ...summarizeWorkout(exercises),
+      message: ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)],
+    };
     if (type !== "Rest" && summary.doneCount === 0) {
       setError("Tick at least one set as done before finishing.");
       return;
     }
     setError("");
     const history = readLocalJSON("dayflow_workout_history", []);
+    const sessionId = log.workout?.session_id || null;
     const now = new Date().toISOString();
     const newWorkout = {
       date: todayISO,
@@ -351,10 +364,15 @@ export function Gym({ log, setLog }) {
       exercises,
       summary,
       savedAt: now,
+      ...(sessionId ? { session_id: sessionId } : {}),
     };
 
     // Pressing Done twice on the same day used to add duplicate history rows.
-    const withoutToday = (Array.isArray(history) ? history : []).filter((item) => !(item.date === todayISO && item.type === type));
+    // "Start another workout" gives the new session a session_id so a second
+    // session of the same split on the same day is kept as its own entry.
+    const withoutToday = (Array.isArray(history) ? history : []).filter((item) => sessionId
+      ? item.session_id !== sessionId
+      : !(item.date === todayISO && item.type === type && !item.session_id));
     writeLocalJSON("dayflow_workout_history", [newWorkout, ...withoutToday]);
     writeLocalJSON(`dayflow_workout_${type}`, exercises);
     cancelRestDone();
@@ -363,6 +381,12 @@ export function Gym({ log, setLog }) {
 
   function editWorkout() {
     setLog((current) => ({ ...current, workout: { ...current.workout, completed_at: null } }));
+  }
+
+  // From local-latest: start a fresh session (the finished one is already in
+  // dayflow_workout_history and its weights are remembered per split).
+  function startAnotherWorkout() {
+    setLog((current) => ({ ...current, workout: { type: current.workout?.type || "Chest", exercises: {}, session_id: createId() } }));
   }
 
   return (
@@ -376,18 +400,32 @@ export function Gym({ log, setLog }) {
           <SectionTitle icon={Dumbbell} title="Workout" />
           <div className="rounded-3xl bg-[hsl(160_50%_45%)]/10 p-5 text-center" role="status">
             <p className="text-2xl font-black">Workout Complete 💪</p>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">Another step stronger. Consistency builds progress.</p>
+            <p className="mt-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">{completed.summary?.message || "Another step stronger. Consistency builds progress."}</p>
             <div className="mt-4 grid grid-cols-3 gap-2">
               <SummaryPill label="Split" value={completed.type} />
               <SummaryPill label="Sets" value={completed.summary?.setCount ?? completed.summary?.doneCount ?? 0} />
               <SummaryPill label="Volume" value={`${completed.summary?.volume ?? 0}`} />
             </div>
             {prCount > 0 && <p className="mt-3 font-black text-amber-600">🏆 {prCount} new personal record{prCount === 1 ? "" : "s"}</p>}
-            {completed.summary?.doneNames?.length > 0 && (
-              <p className="mt-3 text-xs text-zinc-500">{completed.summary.doneNames.join(" · ")}</p>
-            )}
           </div>
-          <Button variant="secondary" onClick={editWorkout} className="mt-3 w-full rounded-2xl py-3">Edit workout</Button>
+          {Object.keys(completed.exercises || {}).some((name) => doneSets(completed.exercises[name]).length) && (
+            <div className="mt-3 rounded-3xl bg-zinc-100 p-4 dark:bg-zinc-800">
+              <p className="font-bold">Logged exercises</p>
+              <div className="mt-2 space-y-2">
+                {Object.entries(completed.exercises || {}).filter(([, item]) => doneSets(item).length).map(([name, item]) => (
+                  <div key={name} className="flex items-center justify-between gap-3 rounded-2xl bg-white p-3 text-sm dark:bg-zinc-900">
+                    <span className="font-semibold">{name}</span>
+                    <span className="text-right text-zinc-500">{doneSets(item).map((set) => `${set.weight || 0} × ${set.reps || 0}`).join(", ")}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="mt-2 text-center text-xs text-zinc-500">Completed {new Date(completed.completed_at).toLocaleString()}</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Button variant="secondary" onClick={editWorkout} className="w-full rounded-2xl py-3">Edit workout</Button>
+            <Button onClick={startAnotherWorkout} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-3 text-white">Start another workout</Button>
+          </div>
         </SoftCard>
       ) : (
         <>
