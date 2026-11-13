@@ -28,6 +28,8 @@
 	<string>Xlife lets you pick photos from your library to save as memories, meals, or purchases.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Xlife can save photos you take to your photo library.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Xlife uses Face ID to lock your journal, health and couple data when you turn on App Lock.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
