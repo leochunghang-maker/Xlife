@@ -1,6 +1,6 @@
 # Xlife engineering backlog and cloud migration plan
 
-_Last updated: 2026-11-12 (reliability pass 1)._
+_Last updated: 2026-11-12 (reliability pass 1 + optimization pass 2)._
 
 This is an honest record of where the code stands. "Working" means it runs on the
 device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
@@ -20,7 +20,7 @@ device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
 | Restaurant catalog (add, search, save, reject) | Working (local only) | Seeded with 2 sample restaurants. |
 | "Smart pick" recommendations | Prototype | Ranked on the phone from your own meals and catalog. It isn't AI and doesn't use live data. Sample fallback ideas are labelled. |
 | Nearby / current-location restaurant search | **Not built** | Needs a place-data provider (Google Places, Yelp, Foursquare). |
-| GYM tracker + Done Workout + history | Working | One weight/reps entry per exercise. There's no multi-set support yet. |
+| GYM tracker + Done Workout + history | Working | One weight/reps entry per exercise. There's no multi-set support yet. Done Workout collapses into a summary (exercises, volume) and doesn't save duplicates. |
 | Sleep: manual entry and "Are you awake?" | Working | |
 | Apple Health / HealthKit sleep sync | **Not built** | There's no native plugin or entitlement. The button now says "soon" and no longer fakes data. |
 | Cycle tracking + calendar | Working (local only) | Phase is estimated with a fixed 28-day model. |
@@ -62,7 +62,48 @@ device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
 - Multi-set workout logging, PDF export, live entertainment data.
 - Real app icon. The committed `AppIcon` is still the default Capacitor icon.
 
-## 3. localStorage key inventory (do not rename)
+### P0b: optimization pass 2 (done, needs iPhone verification)
+- [x] `crypto.randomUUID` fallback (`createId`). The iOS target is 15.0, but randomUUID needs 15.4+, so every save would have thrown on older iOS.
+- [x] Today's log writes are debounced (250 ms) and flushed when the app is hidden, closed, or unmounted. Notes no longer re-serialise megabytes of photos on every keystroke. The Home calendar no longer re-parses all history on every keystroke.
+- [x] `dayflow_last_active_at` updates whenever the app goes to the background, not only when Home opens. This makes the "Are you awake?" timing more accurate.
+- [x] Meals: "Add to Meal" / "Add to meal" now actually log the meal. Before, they only filled in the form, and suggestions were written into history as if they had been eaten. Removing a meal also removes its history copy. Photos aren't stored twice.
+- [x] Done Workout: you must tick at least one exercise, same-day saves replace each other, and you get a summary with "Workout Complete 💪" plus Edit.
+- [x] Plans: choosing option C when the optional B is empty used to save nothing. Confirming now requires an answer for every question.
+- [x] Cycle: "Mark as Period" can be undone. Phases are labelled "(estimate)", with a hint when no cycle start is set. The day difference is now DST-safe.
+- [x] Track Spending clears the review after saving. A second tap used to save a duplicate.
+- [x] Corrupted `dayflow_restaurants` / `dayflow_fun_plans` JSON no longer crashes Meals or Fun.
+- [x] Home "Weekly nutrition" shows real 7-day averages. It used to show today's totals labelled "Avg".
+- [x] Manual sleep entry computes the duration from bedtime and wake time.
+- [x] Accessibility: aria labels on icon buttons, mood, calendar days, and cycle rows. `aria-current` on the tab bar, `aria-pressed` on toggles. Lazy-loaded image lists.
+- [x] Logout and delete restaurant ask for confirmation.
+- [ ] Not fixed (needs a product decision): Create Account overwrites an existing local profile, though the data is kept. The wake-time preference from onboarding isn't used yet.
+
+## 3. Competitor comparison and improvement ideas
+
+Researched on 2026-11-12 from public product pages and reviews (Apple Support, Flo App Store listing, Clue Support, Hevy feature pages, Strong/Hevy comparisons, MyFitnessPal / Cal AI coverage, Locket/BeReal/couple-widget roundups). Effort: S ≈ under a day, M ≈ 2–5 days, L ≈ 1–3 weeks.
+
+| # | Idea | Inspired by | Effort | Status |
+|---|---|---|---|---|
+| 1 | Done Workout summary (exercises done, total volume) + no duplicate saves | Strong, Hevy workout summaries | S | **Implemented (pass 2)** |
+| 2 | Real 7-day nutrition averages on Home | MyFitnessPal weekly nutrition | S | **Implemented (pass 2)** |
+| 3 | "On this day" memories (1 week / 1 month / 1 year ago) | Day One "On This Day", Snapchat Memories | S | **Implemented (pass 2)** |
+| 4 | Memory streak on Snaps | Snapchat streaks, BeReal streaks | S | **Implemented (pass 2)** |
+| 5 | Honest cycle estimates (labelled, undoable period marks) | Apple Health Cycle Tracking | S | **Implemented (pass 2)** |
+| 6 | Multiple sets per exercise with a "previous" column, an automatic rest timer started by ticking a set, and PR badges | Hevy (5 s–5 min per-exercise timer, previous values, live PRs), Strong | M | Proposed (P1) |
+| 7 | Period predictions from *your* logged history (average cycle and period length), a 6-day fertile-window estimate, and prediction notifications. Clearly marked as estimates and not contraception. | Apple Health (predictions from logged history, fertile window = next start − 13 days), Clue, Flo | M | Proposed (P1) |
+| 8 | Food photo → AI estimate *with quick correction* (edit portion, "add oil/butter", typed or voice description), confidence label, and review before saving. Server-side only. | Cal AI (photo-first, depth-assisted), MyFitnessPal Meal Scan / Voice Log (fine-tune ingredients) | L | Proposed (P2, needs Supabase Edge Function + OpenAI) |
+| 9 | Barcode scan + reusable "My foods" / recent meals for 1-tap re-logging | MyFitnessPal, Lose It | M | Proposed |
+| 10 | iOS home-screen widgets: partner's latest snap, days together, countdown to the next plan | Locket (photo widget), Dote, Till, Daily Us | L (native WidgetKit + sync) | Proposed (after real pairing) |
+| 11 | Couple daily question / daily photo prompt that both see once both have answered | BeReal "post to see", Candle, Daily Us | M (needs Supabase) | Proposed |
+| 12 | Shared calendar with anniversary / "days together" counter and countdowns in Us | Between, Dote | S–M | Proposed (local version S) |
+| 13 | Journal upgrades: prompts/templates, daily reminder, Face ID lock for Notes and Health | Day One (prompts, reminders, passcode lock) | M | Proposed |
+| 14 | Cycle report PDF export (last 12 months) for a doctor | Apple Health, Flo | M | Proposed |
+| 15 | Workout CSV export / import from Strong or Hevy | Hevy, Strong | S–M | Proposed |
+| 16 | Partner-safe sharing controls per category (cycle/intimacy/journal private by default) | Flo for Partners, Between privacy | M | Proposed (part of Phase 3) |
+
+Top priorities after cloud auth: #6 and #7 (high daily value, no backend needed), then #8 (needs the AI backend), then #10, #11, and #16 (need real pairing).
+
+## 4. localStorage key inventory (do not rename)
 
 | Key | Shape | Written by |
 |---|---|---|
@@ -87,7 +128,7 @@ device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
 The handover mentions `xlife_partner_connection`. This repository uses `dayflow_partner_connection`.
 If the local `~/dayflow` copy uses the `xlife_` key, reconcile the two before merging.
 
-## 4. Cloud migration plan (Supabase)
+## 5. Cloud migration plan (Supabase)
 
 Principles: local data is the source of truth until a successful upload is confirmed.
 Never delete local keys as part of migration. Make every upload idempotent.
