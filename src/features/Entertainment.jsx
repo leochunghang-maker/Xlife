@@ -14,6 +14,8 @@ import { useDirtyForm } from "../lib/dirtyForms";
 import { Together } from "./Together.jsx";
 import { PartnerFeed } from "./PartnerFeed.jsx";
 import { DailyQuestion } from "./DailyQuestion.jsx";
+import { PartnerConnect } from "./PartnerConnect.jsx";
+import { readPartnerConnection } from "../lib/partnerConnection";
 
 export function Entertainment({ log, setLog }) {
   const [plans, setPlans] = useState(() => {
@@ -30,6 +32,9 @@ export function Entertainment({ log, setLog }) {
     if (connectedPartner) writeLocalJSON("xlife_partner_demo", connectedPartner);
     else localStorage.removeItem("xlife_partner_demo");
   }, [connectedPartner]);
+  // Real/local partner connection (xlife_partner_connection, from local-latest).
+  const [partnerConnection, setPartnerConnection] = useState(readPartnerConnection);
+  const partnerName = (partnerConnection?.status === "connected" && partnerConnection.partnerName) || connectedPartner?.name || "Emily";
   const [planForm, setPlanForm] = useState({
     title: "",
     content: "",
@@ -50,7 +55,7 @@ export function Entertainment({ log, setLog }) {
   const partnerUpdates = [
     { type: "wake", text: `Wake-up time logged at ${log.wake_up_time || "7:30"} ☀️` },
     { type: "meal", text: log.meals[0]?.name ? `Logged ${log.meals[0].name} for ${log.meals[0].type || "a meal"} 🍜` : "Logged ramen for lunch 🍜" },
-    { type: "mood", text: `${connectedPartner?.name || "Emily"} felt ${moodOptions.find((mood) => mood.id === log.mood)?.label.toLowerCase() || "happy"} today ${moodOptions.find((mood) => mood.id === log.mood)?.emoji || "😊"}` },
+    { type: "mood", text: `${partnerName} felt ${moodOptions.find((mood) => mood.id === log.mood)?.label.toLowerCase() || "happy"} today ${moodOptions.find((mood) => mood.id === log.mood)?.emoji || "😊"}` },
     { type: "workout", text: "Finished Shoulder/Arm workout 💪" },
     { type: "snap", text: memorySnaps[0]?.caption ? `Shared a memory: ${memorySnaps[0].caption}` : "Shared a snap from today 📸" },
     { type: "notes", text: log.notes ? `Left a note: ${log.notes}` : "Left a small daily note 📝" },
@@ -215,23 +220,11 @@ export function Entertainment({ log, setLog }) {
           <p id="g9lh0k" className="mt-1 text-sm text-zinc-500">Stay connected through daily moments.</p>
         </div>
 
-        {!connectedPartner && (
-          <div className="mb-4 rounded-3xl bg-gradient-to-br from-orange-50 to-rose-50 p-4 shadow-sm dark:from-zinc-800 dark:to-zinc-900">
-            <p id="tbmjlwm" className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">
-              Connect with your partner to share updates, plans, and memories.
-            </p>
-            <p className="mt-2 text-xs text-zinc-500">
-              Real two-phone pairing needs the cloud backend (not built yet). The button below opens a local demo preview only.
-            </p>
-            <Button
-              id="0frvww"
-              onClick={() => setConnectedPartner({ id: "mock-partner", name: "Emily", demo: true, startedAt: new Date().toISOString() })}
-              className="mt-3 rounded-2xl bg-[hsl(24_80%_58%)] text-white"
-            >
-              Preview with demo partner
-            </Button>
-          </div>
-        )}
+        <PartnerConnect
+          demoActive={Boolean(connectedPartner)}
+          onStartDemo={() => setConnectedPartner({ id: "mock-partner", name: "Emily", demo: true, startedAt: new Date().toISOString() })}
+          onChange={setPartnerConnection}
+        />
 
         <div className="mb-4 grid grid-cols-3 rounded-3xl bg-zinc-100 p-1 dark:bg-zinc-800">
           {[
@@ -499,7 +492,7 @@ export function Entertainment({ log, setLog }) {
 
       <SoftCard>
         <div className="mb-5">
-          <p className="text-3xl font-bold tracking-tight">Entertainment</p>
+          <p className="text-2xl font-bold tracking-tight sm:text-3xl">Entertainment</p>
           <p className="mt-1 text-sm text-zinc-500">Discover what&apos;s trending</p>
           <p className="mt-1 text-xs text-zinc-400">Sample headlines for now, not live news.</p>
         </div>
