@@ -200,7 +200,7 @@ export function WakeConfirmationSheet({ log, setLog, onClose }) {
   }
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-[60] px-3 pb-3">
+    <div className="fixed inset-x-0 bottom-0 z-[60] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
       <div className="mx-auto max-w-2xl rounded-t-[2rem] rounded-b-3xl bg-white p-5 shadow-2xl dark:bg-zinc-900">
         <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-zinc-200 dark:bg-zinc-700" />
         <p className="text-2xl font-bold">Are you awake?</p>
