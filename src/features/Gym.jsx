@@ -199,8 +199,7 @@ function summarizeWorkout(exercises = {}) {
   const reps = done.reduce((sum, [, item]) => sum + Number(item.reps || 0), 0);
   return { doneCount: done.length, volume: Math.round(volume), reps, doneNames: done.map(([name]) => name) };
 }
-export 
-function Gym({ log, setLog }) {
+export function Gym({ log, setLog }) {
   const [error, setError] = useState("");
   const completed = log.workout?.completed_at ? log.workout : null;
 

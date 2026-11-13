@@ -3,11 +3,10 @@ import { Moon } from "lucide-react";
 import { Button, SoftCard, SectionTitle } from "../components/ui.jsx";
 import { todayISO } from "../lib/dates";
 import { initialLog } from "../lib/dailyLog";
-import { formatSleepDuration, currentTimeHHMM, minutesBetweenTimes, saveSleepHistoryRecord, syncSleepFromAppleHealth } from "../lib/sleep";
+import { formatSleepDuration, currentTimeHHMM, minutesBetweenTimes, saveSleepHistoryRecord, syncSleepFromAppleHealth, snoozeWakePrompt, clearWakePrompt } from "../lib/sleep";
 import { SummaryPill } from "./Dashboard.jsx";
 
-export 
-function SleepHealthKitCard({ log, setLog, requestWakeConfirmation }) {
+export function SleepHealthKitCard({ log, setLog, requestWakeConfirmation }) {
   const sleep = log.sleep || initialLog.sleep;
   const [manualOpen, setManualOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -161,8 +160,7 @@ function SleepHealthKitCard({ log, setLog, requestWakeConfirmation }) {
     </SoftCard>
   );
 }
-export 
-function WakeConfirmationSheet({ log, setLog, onClose }) {
+export function WakeConfirmationSheet({ log, setLog, onClose }) {
   const sleep = log.sleep || initialLog.sleep;
   const [editing, setEditing] = useState(false);
   const [wakeTime, setWakeTime] = useState(() => currentTimeHHMM());
@@ -187,12 +185,17 @@ function WakeConfirmationSheet({ log, setLog, onClose }) {
       sleep_quality: confirmedSleep.sleep_quality,
       sleep: confirmedSleep,
     });
-    localStorage.removeItem("dayflow_wake_prompt_snoozed_at");
+    clearWakePrompt();
     onClose();
   }
 
   function dismissTemporarily() {
-    localStorage.setItem("dayflow_wake_prompt_snoozed_at", new Date().toISOString());
+    snoozeWakePrompt();
+    onClose();
+  }
+
+  function skipToday() {
+    snoozeWakePrompt({ skip: true });
     onClose();
   }
 
@@ -229,6 +232,9 @@ function WakeConfirmationSheet({ log, setLog, onClose }) {
               Edit time
             </Button>
           </div>
+          <Button variant="ghost" onClick={skipToday} className="rounded-2xl py-2 text-sm">
+            Don&apos;t ask again today
+          </Button>
         </div>
       </div>
     </div>

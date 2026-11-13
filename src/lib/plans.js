@@ -1,8 +1,7 @@
 import { createId } from "./storage";
 import { todayISO } from "./dates";
 
-export 
-const planInspirationIdeas = [
+export const planInspirationIdeas = [
   {
     title: "Movie + dessert night",
     category: "Movies",
@@ -34,8 +33,7 @@ const planInspirationIdeas = [
     reason: "Flexible enough for both of you to shape the day together.",
   },
 ];
-export 
-function createBlankChoiceBlock(question = "") {
+export function createBlankChoiceBlock(question = "") {
   return {
     id: createId(),
     question,
@@ -43,8 +41,7 @@ function createBlankChoiceBlock(question = "") {
     partnerChoice: null,
   };
 }
-export 
-function normalizePlan(plan) {
+export function normalizePlan(plan) {
   const now = new Date().toISOString();
   const choiceBlocks = (plan.choiceBlocks || []).map((block) => ({
     id: block.id || createId(),

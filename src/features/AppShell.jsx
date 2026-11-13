@@ -3,6 +3,7 @@ import { LayoutDashboard, Utensils, Camera, Sparkles, HeartPulse, LogOut } from 
 import { readLocalJSON, writeLocalJSON, localDateISO, STORAGE_ERROR_EVENT } from "../lib/storage";
 import { Button } from "../components/ui.jsx";
 import { todayISO } from "../lib/dates";
+import { hasDirtyForms } from "../lib/dirtyForms";
 import { loadTodayLog } from "../lib/dailyLog";
 import { classNames } from "../lib/utils";
 import { Dashboard } from "./Dashboard.jsx";
@@ -11,8 +12,7 @@ import { Snaps } from "./Snaps.jsx";
 import { Health } from "./Health.jsx";
 import { Entertainment } from "./Entertainment.jsx";
 
-export 
-function AppShell({ user, onLogout }) {
+export function AppShell({ user, onLogout }) {
   // Camera-first: the app opens on Snaps after sign-in / onboarding.
   const [route, setRoute] = useState("/snaps");
   const [log, setLog] = useState(loadTodayLog);
@@ -61,7 +61,7 @@ function AppShell({ user, onLogout }) {
     function handleVisibility() {
       if (document.visibilityState === "hidden") {
         flush();
-        writeLocalJSON("dayflow_last_active_at", new Date().toISOString());
+        localStorage.setItem("dayflow_last_active_at", new Date().toISOString());
       }
     }
     document.addEventListener("visibilitychange", handleVisibility);
@@ -81,19 +81,35 @@ function AppShell({ user, onLogout }) {
     return () => window.removeEventListener(STORAGE_ERROR_EVENT, handleStorageError);
   }, []);
 
-  // When iOS resumes the app on a new calendar day, reload so the day rolls
-  // over cleanly (today's log is already persisted on every change).
+  // When the calendar day changes (app resumed on a new day, or left open past
+  // midnight), reload so the day rolls over cleanly. Today's log is flushed
+  // first. If the user is mid-way through typing a form, wait and show a
+  // banner instead of wiping their input.
+  const [newDayPending, setNewDayPending] = useState(false);
   useEffect(() => {
-    function handleResume() {
-      if (document.visibilityState === "visible" && localDateISO() !== todayISO) {
-        window.location.reload();
+    function rollOver() {
+      if (pendingWriteRef.current) {
+        clearTimeout(pendingWriteRef.current);
+        pendingWriteRef.current = null;
+        writeLocalJSON("dayflow_log", latestLogRef.current);
       }
+      window.location.reload();
     }
-    document.addEventListener("visibilitychange", handleResume);
-    window.addEventListener("focus", handleResume);
+    function check() {
+      if (localDateISO() === todayISO) return;
+      if (hasDirtyForms()) setNewDayPending(true);
+      else rollOver();
+    }
+    function handleVisibility() {
+      if (document.visibilityState === "visible") check();
+    }
+    const interval = window.setInterval(check, 60 * 1000);
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", check);
     return () => {
-      document.removeEventListener("visibilitychange", handleResume);
-      window.removeEventListener("focus", handleResume);
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", check);
     };
   }, []);
 
@@ -147,6 +163,13 @@ function AppShell({ user, onLogout }) {
           <div className="mx-4 mb-3 flex items-start gap-3 rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-200" role="alert">
             <p className="flex-1">{storageWarning}</p>
             <button onClick={() => setStorageWarning("")} className="shrink-0 font-bold" aria-label="Dismiss">✕</button>
+          </div>
+        )}
+
+        {newDayPending && (
+          <div className="mx-4 mb-3 flex items-center gap-3 rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 dark:bg-amber-500/10 dark:text-amber-200" role="status">
+            <p className="flex-1">A new day has started. Finish what you&apos;re typing, then start the new day.</p>
+            <Button size="sm" variant="secondary" className="shrink-0 rounded-2xl" onClick={() => window.location.reload()}>Start new day</Button>
           </div>
         )}
 

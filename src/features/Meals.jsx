@@ -5,12 +5,12 @@ import { readLocalJSON, writeLocalJSON, createId } from "../lib/storage";
 import { fileToPersistentDataUrl } from "../lib/photos";
 import { Button, SoftCard, SectionTitle } from "../components/ui.jsx";
 import { todayISO } from "../lib/dates";
-import { mealSuggestions, defaultRestaurants, createRestaurantRecord, cuisineCategories, normalizeText, suggestionKey, getMealTypeForNow, getCuisineFallbackRestaurant, getSmartFoodSuggestions } from "../lib/food";
+import { mealSuggestions, loadRestaurantCatalog, createRestaurantRecord, cuisineCategories, suggestionKey, getMealTypeForNow, getCuisineFallbackRestaurant, getSmartFoodSuggestions } from "../lib/food";
 import { classNames } from "../lib/utils";
 import { StoredImage } from "../components/StoredImage.jsx";
+import { useDirtyForm } from "../lib/dirtyForms";
 
-export 
-function Meals({ log, setLog }) {
+export function Meals({ log, setLog }) {
   const [form, setForm] = useState({ type: "breakfast", name: "", calories: "", protein_g: "", sugar_g: "", rating: 5, cost: "" });
   const [suggestions, setSuggestions] = useState([]);
   const [catalogTab, setCatalogTab] = useState("browse");
@@ -31,16 +31,7 @@ function Meals({ log, setLog }) {
     notes: "",
     photo_url: "",
   });
-  const [restaurantCatalog, setRestaurantCatalog] = useState(() => {
-    const savedRestaurants = readLocalJSON("dayflow_restaurants", null);
-    const seededRestaurants = Array.isArray(savedRestaurants)
-      ? savedRestaurants.map(createRestaurantRecord)
-      : defaultRestaurants.map(createRestaurantRecord);
-    if (!savedRestaurants) {
-      writeLocalJSON("dayflow_restaurants", seededRestaurants);
-    }
-    return seededRestaurants;
-  });
+  const [restaurantCatalog, setRestaurantCatalog] = useState(loadRestaurantCatalog);
 
   useEffect(() => {
     writeLocalJSON("dayflow_restaurants", restaurantCatalog);
@@ -73,29 +64,16 @@ function Meals({ log, setLog }) {
 
   const learningMeals = useMemo(() => [...mealHistory, ...(log.meals || [])], [log.meals, mealHistory]);
 
+  // Only the user's own catalog (samples included until deleted) feeds
+  // suggestions; deleted samples are never padded back in.
   const recommendationRestaurants = useMemo(() => {
-    const defaultRecommendationRestaurants = defaultRestaurants.map(createRestaurantRecord);
-    const sourceRestaurants = restaurantCatalog.length
-      ? restaurantCatalog
-      : defaultRecommendationRestaurants;
     const cuisineFiltered = selectedCuisine
-      ? sourceRestaurants.filter((restaurant) => restaurant.cuisine.toLowerCase().includes(selectedCuisine.toLowerCase()))
-      : sourceRestaurants;
-    const padRestaurants = (restaurants) => {
-      const seenKeys = new Set(restaurants.map((restaurant) => `${normalizeText(restaurant.name)}::${normalizeText(restaurant.cuisine)}`));
-      return [
-        ...restaurants,
-        ...defaultRecommendationRestaurants.filter((restaurant) => !seenKeys.has(`${normalizeText(restaurant.name)}::${normalizeText(restaurant.cuisine)}`)),
-      ];
-    };
-
-    if (cuisineFiltered.length >= 3) return cuisineFiltered;
-    if (cuisineFiltered.length) {
-      return selectedCuisine
-        ? padRestaurants([getCuisineFallbackRestaurant(selectedCuisine), ...cuisineFiltered, ...sourceRestaurants])
-        : padRestaurants(cuisineFiltered);
+      ? restaurantCatalog.filter((restaurant) => restaurant.cuisine.toLowerCase().includes(selectedCuisine.toLowerCase()))
+      : restaurantCatalog;
+    if (selectedCuisine && cuisineFiltered.length < 3) {
+      return [getCuisineFallbackRestaurant(selectedCuisine), ...cuisineFiltered, ...restaurantCatalog.filter((restaurant) => !cuisineFiltered.includes(restaurant))];
     }
-    return selectedCuisine ? padRestaurants([getCuisineFallbackRestaurant(selectedCuisine), ...sourceRestaurants]) : padRestaurants(sourceRestaurants);
+    return cuisineFiltered;
   }, [restaurantCatalog, selectedCuisine]);
 
   const generatedFoodSuggestions = useMemo(() => {
@@ -119,6 +97,7 @@ function Meals({ log, setLog }) {
   const noVisibleFoodSuggestions = generatedFoodSuggestions.length > 0 && smartFoodSuggestions.length === 0;
 
   const [mealMessage, setMealMessage] = useState("");
+  useDirtyForm(Boolean(form.name.trim() || restaurantForm.name.trim() || restaurantForm.notes.trim()));
 
   // Logs one meal to today's log and to meal history (history copy has no
   // photo, so images are not stored twice).
@@ -478,7 +457,10 @@ function Meals({ log, setLog }) {
               <div key={restaurant.id} className="rounded-3xl bg-[hsl(30_30%_98%)] p-4 shadow-sm dark:bg-zinc-800">
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div>
-                    <p className="font-bold">{restaurant.name}</p>
+                    <p className="font-bold">
+                      {restaurant.name}
+                      {restaurant.is_sample && <span className="ml-2 rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-zinc-600 dark:bg-zinc-700 dark:text-zinc-200">Sample</span>}
+                    </p>
                     <p className="text-sm text-zinc-500">{restaurant.cuisine || "Cuisine"} · {restaurant.location || "Location"}</p>
                     {restaurant.notes && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{restaurant.notes}</p>}
                   </div>

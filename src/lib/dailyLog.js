@@ -1,8 +1,7 @@
 import { readLocalJSON, writeLocalJSON, recordLocalDate } from "./storage";
 import { todayISO, toLocalDate, toISODate } from "./dates";
 
-export 
-const moodOptions = [
+export const moodOptions = [
   { id: "amazing", emoji: "🤩", label: "Amazing", score: 5 },
   { id: "happy", emoji: "😊", label: "Happy", score: 4 },
   { id: "neutral", emoji: "😐", label: "Neutral", score: 3 },
@@ -40,16 +39,14 @@ function createEmptyDailyLog(dateISO = todayISO, carryOver = {}) {
     snaps: [],
   };
 }
-export 
-const initialLog = createEmptyDailyLog(todayISO);
-export 
+export const initialLog = createEmptyDailyLog(todayISO);
 // Loads today's working log from `dayflow_log`.
 // Bug fixed here: `dayflow_log` used to be a single object that never rolled
 // over, so yesterday's meals/snaps/mood stayed on "today" forever and every
 // past date in the calendar fell back to the same data. Now, when the saved log
 // belongs to an earlier date, it is archived (non-destructively) into
 // `dayflow_daily_logs[date]` and a new empty log is started for today.
-function loadTodayLog() {
+export function loadTodayLog() {
   const saved = readLocalJSON("dayflow_log", null);
   if (!saved || typeof saved !== "object") return initialLog;
 
@@ -86,10 +83,9 @@ function mergeByUrl(first = [], second = []) {
     item && all.findIndex((other) => other?.url === item.url) === index
   ));
 }
-export 
 // Consecutive days (ending today, or yesterday if nothing yet today) with at
 // least one saved memory. Inspired by Snapchat/BeReal streaks.
-function getMemoryStreak(memorySnaps) {
+export function getMemoryStreak(memorySnaps) {
   const dates = new Set(memorySnaps.map((snap) => recordLocalDate(snap)).filter(Boolean));
   const cursor = toLocalDate(todayISO);
   if (!dates.has(todayISO)) cursor.setDate(cursor.getDate() - 1);
@@ -100,10 +96,9 @@ function getMemoryStreak(memorySnaps) {
   }
   return streak;
 }
-export 
 // Memories from one week, one month, and one year ago ("On this day",
 // inspired by Day One and Snapchat Memories). Only real saved memories.
-function getOnThisDayMemories(memorySnaps) {
+export function getOnThisDayMemories(memorySnaps) {
   const today = toLocalDate(todayISO);
   const targets = [
     { label: "1 week ago", date: new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7) },
@@ -114,9 +109,8 @@ function getOnThisDayMemories(memorySnaps) {
     .map((target) => ({ ...target, snaps: memorySnaps.filter((snap) => recordLocalDate(snap) === target.iso) }))
     .filter((target) => target.snaps.length > 0);
 }
-export 
 // All saved memory snaps: today's working log plus every archived day.
-function getAllMemorySnaps(log) {
+export function getAllMemorySnaps(log) {
   const archive = readLocalJSON("dayflow_daily_logs", {});
   const archivedSnaps = Object.values(archive || {}).flatMap((day) => (day?.snaps || []).map((snap) => ({ date: day.date, ...snap })));
   return mergeByUrl(log.snaps || [], archivedSnaps)
@@ -132,9 +126,8 @@ function recordsForDate(source, dateISO) {
   if (source[dateISO]) return Array.isArray(source[dateISO]) ? source[dateISO] : [source[dateISO]];
   return Object.values(source).flat().filter((item) => item && typeof item === "object" && recordLocalDate(item) === dateISO);
 }
-export 
 // Read every history source once (instead of once per calendar cell).
-function readHistorySources() {
+export function readHistorySources() {
   return {
     dailyLogs: readLocalJSON("dayflow_daily_logs", {}),
     sleepHistory: readLocalJSON("dayflow_sleep_history", []),
@@ -152,8 +145,7 @@ function readHistorySources() {
 function hasSleepData(sleep) {
   return Boolean(sleep && (sleep.wake_time || sleep.bedtime || Number(sleep.duration_minutes || 0) > 0));
 }
-export 
-function buildDailyLogSummary(log, selectedDate, sources = readHistorySources()) {
+export function buildDailyLogSummary(log, selectedDate, sources = readHistorySources()) {
   const { dailyLogs, sleepHistory, periodLogs, workoutHistory, spendingRecords, mealHistory, storedSnaps } = sources;
   const isToday = selectedDate === todayISO;
   // Today always comes from the live log; past dates come only from archives

@@ -9,12 +9,12 @@ import { getMealTypeForNow } from "../lib/food";
 import { getMemoryStreak, getAllMemorySnaps } from "../lib/dailyLog";
 import { classNames } from "../lib/utils";
 import { StoredImage } from "../components/StoredImage.jsx";
+import { useDirtyForm } from "../lib/dirtyForms";
 
 
 const emptyFoodForm = { meal_type: getMealTypeForNow(), name: "", calories: "", protein_g: "", sugar_g: "", cost: "", rating: 0, notes: "" };
 const emptySpendingForm = { item_name: "", amount: "", category: "Food", merchant: "", notes: "" };
-export 
-function Snaps({ log, setLog, pendingSnap, setPendingSnap }) {
+export function Snaps({ log, setLog, pendingSnap, setPendingSnap }) {
   // `pendingSnap` is owned by AppShell (and mirrored to localStorage) so the
   // review screen cannot be lost if this component remounts while the native
   // camera is open. This was the cause class behind "the first photo after
@@ -30,6 +30,7 @@ function Snaps({ log, setLog, pendingSnap, setPendingSnap }) {
   const [capturing, setCapturing] = useState(false);
   const [captureError, setCaptureError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
+  useDirtyForm(Boolean(caption.trim() || foodForm.name.trim() || spendingForm.item_name.trim() || String(spendingForm.amount).trim()));
   const capturingRef = useRef(false);
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);

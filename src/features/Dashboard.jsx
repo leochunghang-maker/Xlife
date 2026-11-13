@@ -9,8 +9,7 @@ import { formatSleepDuration, shouldShowWakeConfirmation } from "../lib/sleep";
 import { SleepHealthKitCard, WakeConfirmationSheet } from "./Sleep.jsx";
 import { StoredImage } from "../components/StoredImage.jsx";
 
-export 
-function Dashboard({ log, setLog, totals, go }) {
+export function Dashboard({ log, setLog, totals, go }) {
   const mood = moodOptions.find((m) => m.id === log.mood) || moodOptions[2];
   const progress = log.calorie_goal ? Math.min(100, Math.round((totals.totalCalories / log.calorie_goal) * 100)) : 0;
   const [showWakeSheet, setShowWakeSheet] = useState(() => shouldShowWakeConfirmation(log.sleep || initialLog.sleep));
@@ -128,8 +127,7 @@ function Dashboard({ log, setLog, totals, go }) {
     </>
   );
 }
-export 
-function SummaryPill({ label, value }) {
+export function SummaryPill({ label, value }) {
   return <div className="bg-white dark:bg-zinc-900 rounded-[1.35rem] shadow-sm p-3"><p className="text-xs text-zinc-400">{label}</p><p className="font-bold text-lg truncate">{value}</p></div>;
 }
 

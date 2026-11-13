@@ -1,7 +1,6 @@
 
 
-export 
-const entertainmentNews = {
+export const entertainmentNews = {
   Movies: [
     "A new romantic drama is climbing the weekend watchlist.",
     "Indie sci-fi trailers are driving the most saves this week.",

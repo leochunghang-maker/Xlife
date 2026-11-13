@@ -53,8 +53,7 @@ function blankCycleLog() {
     notes: "",
   };
 }
-export 
-function Health({ log }) {
+export function Health({ log }) {
   const [activeTab, setActiveTab] = useState("cycle");
 
   return (

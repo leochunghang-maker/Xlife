@@ -5,8 +5,7 @@ import { cuisineCategories, normalizeText } from "../lib/food";
 import { classNames } from "../lib/utils";
 import { toggleListValue } from "../lib/cycle";
 
-export 
-function Onboarding({ onAuthenticated }) {
+export function Onboarding({ onAuthenticated }) {
   const [screen, setScreen] = useState("welcome");
   const [createdUser, setCreatedUser] = useState(null);
   const [authError, setAuthError] = useState("");
@@ -28,7 +27,13 @@ function Onboarding({ onAuthenticated }) {
   const [inviteCode, setInviteCode] = useState("");
   const [partnerCode, setPartnerCode] = useState("");
 
+  const existingUser = readLocalJSON("dayflow_user", null);
+
   function createAccount() {
+    if (existingUser) {
+      setAuthError(`This phone already has an Xlife profile for ${existingUser.email || existingUser.name || "another account"}. Sign in instead — creating a new account here would hide that profile's data.`);
+      return;
+    }
     if (!createForm.name.trim() || !createForm.email.trim() || !createForm.password.trim()) {
       setAuthError("Add your name, email, and password to create your account.");
       return;
@@ -175,6 +180,14 @@ function Onboarding({ onAuthenticated }) {
                 <option value="nonbinary">Non-binary</option>
                 <option value="prefer_not_to_say">Prefer not to say</option>
               </select>
+              {existingUser && (
+                <div className="rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+                  <p>A profile for {existingUser.email || existingUser.name} is already saved on this phone.</p>
+                  <Button variant="secondary" onClick={() => { setSignInForm({ ...signInForm, email: existingUser.email || "" }); setScreen("signin"); setAuthError(""); }} className="mt-2 w-full rounded-2xl">
+                    Sign in instead
+                  </Button>
+                </div>
+              )}
               {authError && <p className="rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-600">{authError}</p>}
               <Button onClick={createAccount} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-4 text-white">
                 Create Account
@@ -210,7 +223,8 @@ function Onboarding({ onAuthenticated }) {
                 <p className="mt-1 text-sm text-zinc-500">A few preferences make Xlife feel more like you.</p>
               </div>
               <input className="field" placeholder="Daily calorie goal" type="number" value={preferences.daily_calorie_goal} onChange={(e) => setPreferences({ ...preferences, daily_calorie_goal: e.target.value })} />
-              <input className="field" type="time" value={preferences.preferred_wake_time} onChange={(e) => setPreferences({ ...preferences, preferred_wake_time: e.target.value })} />
+              <label className="block text-sm font-bold text-zinc-500" htmlFor="onboarding-wake">Usual wake-up time</label>
+              <input id="onboarding-wake" className="field" type="time" value={preferences.preferred_wake_time} onChange={(e) => setPreferences({ ...preferences, preferred_wake_time: e.target.value })} />
               <input className="field" placeholder="Fitness goal" value={preferences.fitness_goal} onChange={(e) => setPreferences({ ...preferences, fitness_goal: e.target.value })} />
               <div>
                 <p className="mb-2 text-sm font-bold text-zinc-500">Favorite cuisines</p>

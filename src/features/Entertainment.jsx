@@ -10,9 +10,9 @@ import { classNames } from "../lib/utils";
 import { Gym } from "./Gym.jsx";
 import { planInspirationIdeas, createBlankChoiceBlock, normalizePlan } from "../lib/plans";
 import { StoredImage } from "../components/StoredImage.jsx";
+import { useDirtyForm } from "../lib/dirtyForms";
 
-export 
-function Entertainment({ log, setLog }) {
+export function Entertainment({ log, setLog }) {
   const [plans, setPlans] = useState(() => {
     const savedPlans = readLocalJSON("dayflow_fun_plans", []);
     const parsedPlans = Array.isArray(savedPlans) ? savedPlans : [];
@@ -21,7 +21,12 @@ function Entertainment({ log, setLog }) {
 
   const [entertainmentCategory, setEntertainmentCategory] = useState("Movies");
   const [usTab, setUsTab] = useState("updates");
-  const [connectedPartner, setConnectedPartner] = useState(null);
+  // Demo partner preview is persisted so it survives restarts (xlife_partner_demo).
+  const [connectedPartner, setConnectedPartner] = useState(() => readLocalJSON("xlife_partner_demo", null));
+  useEffect(() => {
+    if (connectedPartner) writeLocalJSON("xlife_partner_demo", connectedPartner);
+    else localStorage.removeItem("xlife_partner_demo");
+  }, [connectedPartner]);
   const [planForm, setPlanForm] = useState({
     title: "",
     content: "",
@@ -30,6 +35,7 @@ function Entertainment({ log, setLog }) {
     choiceBlocks: [createBlankChoiceBlock("What should we do first?")],
   });
   const [planError, setPlanError] = useState("");
+  useDirtyForm(Boolean(planForm.title.trim() || planForm.content.trim()));
   const [aiPlanIdeas, setAiPlanIdeas] = useState([]);
   const entertainmentCategories = [
     { label: "Movies", icon: "🎬" },
@@ -216,7 +222,7 @@ function Entertainment({ log, setLog }) {
             </p>
             <Button
               id="0frvww"
-              onClick={() => setConnectedPartner({ id: "mock-partner", name: "Emily" })}
+              onClick={() => setConnectedPartner({ id: "mock-partner", name: "Emily", demo: true, startedAt: new Date().toISOString() })}
               className="mt-3 rounded-2xl bg-[hsl(24_80%_58%)] text-white"
             >
               Preview with demo partner
@@ -244,6 +250,13 @@ function Entertainment({ log, setLog }) {
             </button>
           ))}
         </div>
+
+        {connectedPartner?.demo && (
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-3xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+            <p>Demo partner preview is on ({connectedPartner.name}). Nothing here comes from a real partner.</p>
+            <Button size="sm" variant="secondary" className="shrink-0 rounded-2xl" onClick={() => setConnectedPartner(null)}>End demo</Button>
+          </div>
+        )}
 
         {usTab === "updates" && (
           <div className="space-y-3">

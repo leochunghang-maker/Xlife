@@ -1,7 +1,6 @@
-import { createId } from "./storage";
+import { readLocalJSON, writeLocalJSON, createId } from "./storage";
 
-export 
-const mealSuggestions = {
+export const mealSuggestions = {
   breakfast: [
     { name: "Greek yogurt bowl with berries", calories: 380, protein_g: 28, sugar_g: 18 },
     { name: "Avocado egg toast", calories: 430, protein_g: 22, sugar_g: 4 },
@@ -27,9 +26,13 @@ const mealSuggestions = {
     { name: "Boiled eggs and fruit", calories: 230, protein_g: 14, sugar_g: 10 },
   ],
 };
-export 
-const defaultRestaurants = [
+// Example restaurants shown once on first launch so the Meals tab isn't empty.
+// They are flagged is_sample, labelled "Sample" in the UI, and never re-seeded
+// after deletion (xlife_sample_restaurants_seeded).
+export const SAMPLE_SEEDED_KEY = "xlife_sample_restaurants_seeded";
+export const defaultRestaurants = [
   {
+    is_sample: true,
     name: "Daily Green Bowl",
     cuisine: "Healthy bowls",
     location: "Downtown",
@@ -41,6 +44,7 @@ const defaultRestaurants = [
     ],
   },
   {
+    is_sample: true,
     name: "Sunny Cafe",
     cuisine: "Cafe",
     location: "Near home",
@@ -52,8 +56,7 @@ const defaultRestaurants = [
     ],
   },
 ];
-export 
-function createRestaurantRecord(restaurant) {
+export function createRestaurantRecord(restaurant) {
   const now = new Date().toISOString();
   return {
     id: restaurant.id || createId(),
@@ -66,6 +69,8 @@ function createRestaurantRecord(restaurant) {
     notes: restaurant.notes || "",
     photo_url: restaurant.photo_url || "",
     saved: Boolean(restaurant.saved),
+    // Built-in examples are clearly labelled and can be deleted for good.
+    is_sample: Boolean(restaurant.is_sample),
     menu_items: (restaurant.menu_items || []).map((item) => ({
       id: item.id || createId(),
       name: item.name || "",
@@ -81,14 +86,11 @@ function createRestaurantRecord(restaurant) {
     updatedAt: restaurant.updatedAt || now,
   };
 }
-export 
-const cuisineCategories = ["Chinese", "Japanese", "Indian", "Western", "Vietnamese", "Thai", "Korean", "Italian"];
-export 
-function normalizeText(value) {
+export const cuisineCategories = ["Chinese", "Japanese", "Indian", "Western", "Vietnamese", "Thai", "Korean", "Italian"];
+export function normalizeText(value) {
   return String(value || "").trim().toLowerCase();
 }
-export 
-function suggestionKey(name, restaurantName = "") {
+export function suggestionKey(name, restaurantName = "") {
   return `${normalizeText(restaurantName)}::${normalizeText(name)}`;
 }
 
@@ -100,8 +102,7 @@ function getMealCalorieTarget(mealType) {
     snack: 250,
   }[mealType] || 550;
 }
-export 
-function getMealTypeForNow() {
+export function getMealTypeForNow() {
   const hour = new Date().getHours();
   if (hour < 11) return "breakfast";
   if (hour < 16) return "lunch";
@@ -141,8 +142,7 @@ function getMockMenuItemForRestaurant(restaurant, mealType) {
     mock: true,
   };
 }
-export 
-function getCuisineFallbackRestaurant(cuisine = "") {
+export function getCuisineFallbackRestaurant(cuisine = "") {
   const normalizedCuisine = cuisine || "Western";
   return createRestaurantRecord({
     id: `mock-${normalizeText(normalizedCuisine) || "dayflow"}-pick`,
@@ -154,8 +154,7 @@ function getCuisineFallbackRestaurant(cuisine = "") {
     menu_items: [],
   });
 }
-export 
-function getSmartFoodSuggestions({ mealType, meals, restaurants, rejectedSuggestions, savedSuggestions }) {
+export function getSmartFoodSuggestions({ mealType, meals, restaurants, rejectedSuggestions, savedSuggestions }) {
   const effectiveMealType = mealType || getMealTypeForNow();
   const allMeals = meals || [];
   const rejectedKeys = new Set((rejectedSuggestions || []).map((item) => item.key || suggestionKey(item.name, item.restaurant_name)));
@@ -287,4 +286,23 @@ function getSmartFoodSuggestions({ mealType, meals, restaurants, rejectedSuggest
       };
     })
     .sort((a, b) => b.score - a.score);
+}
+
+// Loads dayflow_restaurants, seeding the samples only on the very first run,
+// and tags legacy (pre-flag) copies of the samples so they show as "Sample".
+export function loadRestaurantCatalog() {
+  const saved = readLocalJSON("dayflow_restaurants", null);
+  const alreadySeeded = Boolean(localStorage.getItem(SAMPLE_SEEDED_KEY));
+  if (!Array.isArray(saved)) {
+    const seeded = alreadySeeded ? [] : defaultRestaurants.map(createRestaurantRecord);
+    writeLocalJSON("dayflow_restaurants", seeded);
+    localStorage.setItem(SAMPLE_SEEDED_KEY, new Date().toISOString());
+    return seeded;
+  }
+  if (!alreadySeeded) localStorage.setItem(SAMPLE_SEEDED_KEY, new Date().toISOString());
+  const sampleKeys = new Set(defaultRestaurants.map((r) => `${normalizeText(r.name)}::${normalizeText(r.notes)}`));
+  return saved.map((restaurant) => createRestaurantRecord({
+    ...restaurant,
+    is_sample: restaurant.is_sample ?? sampleKeys.has(`${normalizeText(restaurant.name)}::${normalizeText(restaurant.notes)}`),
+  }));
 }
