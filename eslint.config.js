@@ -5,7 +5,8 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // ios/App/App/public is the copied web build written by `npx cap sync ios`.
+  globalIgnores(['dist', 'ios/App/App/public', 'ios/**/build', 'android']),
   {
     files: ['**/*.{js,jsx}'],
     extends: [

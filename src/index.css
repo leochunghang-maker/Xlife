@@ -2,12 +2,39 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Lets iOS render native controls (date/time pickers, keyboards) to match. */
+  color-scheme: light dark;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  overscroll-behavior-y: none;
+}
+
 body {
   font-family: Inter, sans-serif;
   margin: 0;
   background: hsl(30 30% 98%);
+  -webkit-text-size-adjust: 100%;
 }
 
+@media (prefers-color-scheme: dark) {
+  body {
+    background: rgb(9 9 11); /* zinc-950, matches the app shell */
+  }
+}
+
+/* iOS Safari/WKWebView zooms the page when focusing a field under 16px. */
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+
+/* Dark-mode contrast fix: .field had a light background with no text color,
+   so typed text inherited white and was unreadable in dark mode. */
 .field {
-  @apply w-full rounded-2xl bg-zinc-100 px-4 py-3 outline-none mb-2;
+  @apply w-full rounded-2xl bg-zinc-100 px-4 py-3 text-zinc-900 outline-none mb-2 placeholder:text-zinc-400 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder:text-zinc-500;
 }

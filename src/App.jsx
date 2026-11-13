@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   LayoutDashboard,
@@ -18,6 +18,8 @@ import {
   Star,
   ChevronRight,
 } from "lucide-react";
+import { readLocalJSON, writeLocalJSON, recordLocalDate, localDateISO, createId, STORAGE_ERROR_EVENT } from "./lib/storage";
+import { isNativeCamera, captureNativePhoto, chooseNativePhoto, fileToPersistentDataUrl, isPermissionDenied } from "./lib/photos";
 function Button({ children, className = "", variant = "default", size = "default", ...props }) {
   return (
     <button
@@ -41,7 +43,9 @@ function CardContent({ children, className = "" }) {
   return <div className={className}>{children}</div>;
 }
 
-const todayISO = toISODate(new Date());
+// Evaluated once per page load. AppShell reloads the WebView when the app is
+// resumed on a new calendar day so this never goes stale (see AppShell).
+const todayISO = localDateISO();
 
 const moodOptions = [
   { id: "amazing", emoji: "🤩", label: "Amazing", score: 5 },
@@ -106,7 +110,7 @@ const defaultRestaurants = [
 function createRestaurantRecord(restaurant) {
   const now = new Date().toISOString();
   return {
-    id: restaurant.id || crypto.randomUUID(),
+    id: restaurant.id || createId(),
     name: restaurant.name || "",
     cuisine: restaurant.cuisine || "",
     location: restaurant.location || "",
@@ -117,7 +121,7 @@ function createRestaurantRecord(restaurant) {
     photo_url: restaurant.photo_url || "",
     saved: Boolean(restaurant.saved),
     menu_items: (restaurant.menu_items || []).map((item) => ({
-      id: item.id || crypto.randomUUID(),
+      id: item.id || createId(),
       name: item.name || "",
       calories: Number(item.calories || 0),
       protein_g: Number(item.protein_g || 0),
@@ -187,7 +191,7 @@ function getMockMenuItemForRestaurant(restaurant, mealType) {
     sugar_g: isMorning ? 7 : 9,
     cost: isDinner ? 18 : 13.5,
     rating: Number(restaurant.rating || 4),
-    notes: restaurant.notes || "Mock AI estimate from restaurant profile.",
+    notes: restaurant.notes || "Sample estimate, not real menu data.",
     mock: true,
   };
 }
@@ -196,9 +200,9 @@ function getCuisineFallbackRestaurant(cuisine = "") {
   const normalizedCuisine = cuisine || "Western";
   return createRestaurantRecord({
     id: `mock-${normalizeText(normalizedCuisine) || "dayflow"}-pick`,
-    name: `${normalizedCuisine} Dayflow Pick`,
+    name: `${normalizedCuisine} idea (sample)`,
     cuisine: normalizedCuisine,
-    location: "Mock recommendation",
+    location: "Sample idea, not a real restaurant",
     rating: 4,
     notes: "Starter AI pick until your own restaurant catalog grows.",
     menu_items: [],
@@ -357,40 +361,119 @@ const entertainmentNews = {
   ],
 };
 
-const initialLog = {
+const emptySleep = {
   date: todayISO,
-  wake_up_time: "08:15",
-  sleep_quality: "good",
-  sleep: {
-    date: todayISO,
-    source: "manual",
-    bedtime: "23:45",
-    wake_time: "08:15",
-    duration_minutes: 510,
-    sleep_quality: "good",
-    sleep_stages: {
-      awake: 28,
-      rem: 92,
-      core: 300,
-      deep: 90,
-    },
-    last_synced_at: null,
-    confirmed_awake: false,
-    confirmed_at: null,
-  },
-  meals: [
-    { type: "breakfast", name: "Greek yogurt bowl", calories: 380, protein_g: 28, sugar_g: 18, time: "09:05", rating: 5, cost: 7.5 },
-    { type: "lunch", name: "Chicken quinoa salad", calories: 540, protein_g: 42, sugar_g: 7, time: "12:45", rating: 4, cost: 13.5 },
-  ],
-  calorie_goal: 2000,
-  mood: "happy",
-  notes: "Felt productive and had a balanced lunch.",
-  workout: { type: "Chest", exercises: {} },
-  snaps: [
-    { url: "https://images.unsplash.com/photo-1498837167922-ddd27525d352?q=80&w=600&auto=format&fit=crop", caption: "Healthy lunch" },
-    { url: "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=600&auto=format&fit=crop", caption: "Evening walk" },
-  ],
+  source: "manual",
+  bedtime: "",
+  wake_time: "",
+  duration_minutes: 0,
+  sleep_quality: "",
+  sleep_stages: {},
+  last_synced_at: null,
+  confirmed_awake: false,
+  confirmed_at: null,
 };
+
+// A fresh, empty log for one calendar day. Earlier builds seeded this with demo
+// meals/snaps/notes, which then showed up as if the user had logged them.
+function createEmptyDailyLog(dateISO = todayISO, carryOver = {}) {
+  const preferences = readLocalJSON("dayflow_user_preferences", {});
+  return {
+    date: dateISO,
+    wake_up_time: "",
+    sleep_quality: "",
+    sleep: { ...emptySleep, date: dateISO },
+    meals: [],
+    calorie_goal: Number(carryOver.calorie_goal || preferences.daily_calorie_goal || 2000),
+    mood: "",
+    notes: "",
+    workout: carryOver.workout || { type: "Chest", exercises: {} },
+    snaps: [],
+  };
+}
+
+const initialLog = createEmptyDailyLog(todayISO);
+
+// Loads today's working log from `dayflow_log`.
+// Bug fixed here: `dayflow_log` used to be a single object that never rolled
+// over, so yesterday's meals/snaps/mood stayed on "today" forever and every
+// past date in the calendar fell back to the same data. Now, when the saved log
+// belongs to an earlier date, it is archived (non-destructively) into
+// `dayflow_daily_logs[date]` and a new empty log is started for today.
+function loadTodayLog() {
+  const saved = readLocalJSON("dayflow_log", null);
+  if (!saved || typeof saved !== "object") return initialLog;
+
+  const savedDate = saved.date || todayISO;
+  if (savedDate === todayISO) {
+    return { ...initialLog, ...saved, date: todayISO };
+  }
+
+  const archive = readLocalJSON("dayflow_daily_logs", {});
+  const archived = archive[savedDate];
+  const archivedOk = writeLocalJSON("dayflow_daily_logs", {
+    ...archive,
+    [savedDate]: archived ? { ...archived, ...saved, snaps: mergeByUrl(archived.snaps, saved.snaps), meals: saved.meals || archived.meals || [] } : saved,
+  });
+  if (!archivedOk) {
+    // Could not archive (storage full). Keep the old log as-is rather than
+    // dropping it; the storage warning banner tells the user what happened.
+    return { ...initialLog, ...saved };
+  }
+
+  const lastType = saved.workout?.type || "Chest";
+  const template = readLocalJSON(`dayflow_workout_${lastType}`, {});
+  const previousValues = Object.fromEntries(
+    Object.entries(template || {}).map(([name, item]) => [name, { ...item, done: false }])
+  );
+  return createEmptyDailyLog(todayISO, {
+    calorie_goal: saved.calorie_goal,
+    workout: { type: lastType, exercises: previousValues },
+  });
+}
+
+function mergeByUrl(first = [], second = []) {
+  return [...(first || []), ...(second || [])].filter((item, index, all) => (
+    item && all.findIndex((other) => other?.url === item.url) === index
+  ));
+}
+
+// Consecutive days (ending today, or yesterday if nothing yet today) with at
+// least one saved memory. Inspired by Snapchat/BeReal streaks.
+function getMemoryStreak(memorySnaps) {
+  const dates = new Set(memorySnaps.map((snap) => recordLocalDate(snap)).filter(Boolean));
+  const cursor = toLocalDate(todayISO);
+  if (!dates.has(todayISO)) cursor.setDate(cursor.getDate() - 1);
+  let streak = 0;
+  while (dates.has(toISODate(cursor))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+// Memories from one week, one month, and one year ago ("On this day",
+// inspired by Day One and Snapchat Memories). Only real saved memories.
+function getOnThisDayMemories(memorySnaps) {
+  const today = toLocalDate(todayISO);
+  const targets = [
+    { label: "1 week ago", date: new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7) },
+    { label: "1 month ago", date: new Date(today.getFullYear(), today.getMonth() - 1, today.getDate()) },
+    { label: "1 year ago", date: new Date(today.getFullYear() - 1, today.getMonth(), today.getDate()) },
+  ].map((target) => ({ ...target, iso: toISODate(target.date) }));
+  return targets
+    .map((target) => ({ ...target, snaps: memorySnaps.filter((snap) => recordLocalDate(snap) === target.iso) }))
+    .filter((target) => target.snaps.length > 0);
+}
+
+// All saved memory snaps: today's working log plus every archived day.
+function getAllMemorySnaps(log) {
+  const archive = readLocalJSON("dayflow_daily_logs", {});
+  const archivedSnaps = Object.values(archive || {}).flatMap((day) => (day?.snaps || []).map((snap) => ({ date: day.date, ...snap })));
+  return mergeByUrl(log.snaps || [], archivedSnaps)
+    .filter((snap) => !snap.type || snap.type === "memory")
+    .sort((a, b) => String(b.taken_at || b.date || "").localeCompare(String(a.taken_at || a.date || "")));
+}
 
 function classNames(...classes) {
   return classes.filter(Boolean).join(" ");
@@ -425,7 +508,7 @@ function Onboarding({ onAuthenticated }) {
     }
 
     const user = {
-      id: crypto.randomUUID(),
+      id: createId(),
       name: createForm.name.trim(),
       email: createForm.email.trim(),
       birthday: createForm.birthday,
@@ -435,14 +518,14 @@ function Onboarding({ onAuthenticated }) {
     };
 
     // Future Supabase Auth: replace this localStorage write with signUp() and a profiles insert.
-    localStorage.setItem("dayflow_user", JSON.stringify(user));
+    writeLocalJSON("dayflow_user", user);
     setCreatedUser(user);
     setAuthError("");
     setScreen("profile");
   }
 
   function signIn() {
-    const savedUser = JSON.parse(localStorage.getItem("dayflow_user") || "null");
+    const savedUser = readLocalJSON("dayflow_user", null);
     if (!savedUser || normalizeText(savedUser.email) !== normalizeText(signInForm.email)) {
       setAuthError("We could not find that email yet. Create an account first or check the address.");
       return;
@@ -462,14 +545,14 @@ function Onboarding({ onAuthenticated }) {
   }
 
   function savePreferences() {
-    const savedUser = createdUser || JSON.parse(localStorage.getItem("dayflow_user") || "null");
+    const savedUser = createdUser || readLocalJSON("dayflow_user", null);
     if (!savedUser) return;
 
-    localStorage.setItem("dayflow_user_preferences", JSON.stringify({
+    writeLocalJSON("dayflow_user_preferences", {
       ...preferences,
       daily_calorie_goal: Number(preferences.daily_calorie_goal || 0),
       createdAt: new Date().toISOString(),
-    }));
+    });
     localStorage.setItem("dayflow_active_session", "true");
 
     if (preferences.relationship_mode === "Couple") {
@@ -481,7 +564,7 @@ function Onboarding({ onAuthenticated }) {
   }
 
   function generateInviteCode() {
-    const code = `DAY-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const code = `XL-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
     const connection = {
       inviteCode: code,
       partnerName: null,
@@ -489,19 +572,19 @@ function Onboarding({ onAuthenticated }) {
       createdAt: new Date().toISOString(),
     };
 
-    localStorage.setItem("dayflow_partner_connection", JSON.stringify(connection));
+    writeLocalJSON("dayflow_partner_connection", connection);
     setInviteCode(code);
   }
 
   function finishPartnerSetup() {
-    const savedUser = createdUser || JSON.parse(localStorage.getItem("dayflow_user") || "null");
+    const savedUser = createdUser || readLocalJSON("dayflow_user", null);
     if (partnerCode.trim()) {
-      localStorage.setItem("dayflow_partner_connection", JSON.stringify({
+      writeLocalJSON("dayflow_partner_connection", {
         inviteCode: partnerCode.trim(),
         partnerName: null,
         connected: false,
         createdAt: new Date().toISOString(),
-      }));
+      });
     }
     localStorage.setItem("dayflow_active_session", "true");
     onAuthenticated(savedUser);
@@ -515,7 +598,7 @@ function Onboarding({ onAuthenticated }) {
             <div className="space-y-5">
               <div className="rounded-[2rem] bg-gradient-to-br from-orange-100 via-white to-teal-50 p-5 dark:from-zinc-800 dark:via-zinc-900 dark:to-zinc-800">
                 <p className="text-xs font-black uppercase tracking-[0.28em] text-[hsl(24_80%_58%)]">welcome to</p>
-                <h1 className="mt-2 text-5xl font-black tracking-tight">Dayflow</h1>
+                <h1 className="mt-2 text-5xl font-black tracking-tight">Xlife</h1>
                 <p className="mt-3 text-base font-semibold text-zinc-600 dark:text-zinc-300">
                   Your daily life, health, memories, and relationship — all in one flow.
                 </p>
@@ -549,7 +632,7 @@ function Onboarding({ onAuthenticated }) {
             <div className="space-y-3">
               <div>
                 <p className="text-3xl font-black">Create account</p>
-                <p className="mt-1 text-sm text-zinc-500">Start your personal Dayflow space.</p>
+                <p className="mt-1 text-sm text-zinc-500">Start your personal Xlife space.</p>
               </div>
               <div className="rounded-3xl bg-[hsl(30_30%_98%)] p-4 text-center text-sm font-semibold text-zinc-500 dark:bg-zinc-800">
                 Profile photo placeholder
@@ -579,7 +662,7 @@ function Onboarding({ onAuthenticated }) {
             <div className="space-y-3">
               <div>
                 <p className="text-3xl font-black">Welcome back</p>
-                <p className="mt-1 text-sm text-zinc-500">Sign in to your saved Dayflow profile.</p>
+                <p className="mt-1 text-sm text-zinc-500">Sign in to your saved Xlife profile on this phone.</p>
               </div>
               <input className="field" placeholder="Email" type="email" value={signInForm.email} onChange={(e) => setSignInForm({ ...signInForm, email: e.target.value })} />
               <input className="field" placeholder="Password" type="password" value={signInForm.password} onChange={(e) => setSignInForm({ ...signInForm, password: e.target.value })} />
@@ -597,7 +680,7 @@ function Onboarding({ onAuthenticated }) {
             <div className="space-y-3">
               <div>
                 <p className="text-3xl font-black">Set your flow</p>
-                <p className="mt-1 text-sm text-zinc-500">A few preferences make Dayflow feel more like you.</p>
+                <p className="mt-1 text-sm text-zinc-500">A few preferences make Xlife feel more like you.</p>
               </div>
               <input className="field" placeholder="Daily calorie goal" type="number" value={preferences.daily_calorie_goal} onChange={(e) => setPreferences({ ...preferences, daily_calorie_goal: e.target.value })} />
               <input className="field" type="time" value={preferences.preferred_wake_time} onChange={(e) => setPreferences({ ...preferences, preferred_wake_time: e.target.value })} />
@@ -650,7 +733,7 @@ function Onboarding({ onAuthenticated }) {
             <div className="space-y-4">
               <div>
                 <p className="text-3xl font-black">Connect with your partner</p>
-                <p className="mt-1 text-sm text-zinc-500">Pairing is mocked locally for now and ready for a shared backend later.</p>
+                <p className="mt-1 text-sm text-zinc-500">Real pairing between two phones isn't available yet (it needs the planned cloud backend). Codes are saved on this phone only.</p>
               </div>
               <Button onClick={generateInviteCode} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-4 text-white">
                 Generate invite code
@@ -663,7 +746,7 @@ function Onboarding({ onAuthenticated }) {
               )}
               <input className="field" placeholder="Enter partner code" value={partnerCode} onChange={(e) => setPartnerCode(e.target.value)} />
               <Button variant="secondary" onClick={finishPartnerSetup} className="w-full rounded-2xl py-4">
-                Skip for now
+                {partnerCode.trim() ? "Save code and continue" : "Skip for now"}
               </Button>
             </div>
           )}
@@ -674,15 +757,94 @@ function Onboarding({ onAuthenticated }) {
 }
 
 function AppShell({ user, onLogout }) {
-  const [route, setRoute] = useState("/");
-  const [log, setLog] = useState(() => {
-    const savedLog = localStorage.getItem("dayflow_log");
-    return savedLog ? { ...initialLog, ...JSON.parse(savedLog) } : initialLog;
-  });
+  // Camera-first: the app opens on Snaps after sign-in / onboarding.
+  const [route, setRoute] = useState("/snaps");
+  const [log, setLog] = useState(loadTodayLog);
+  const [storageWarning, setStorageWarning] = useState("");
+  // The captured photo awaiting "Save Memory / Mark Food / Track Spending".
+  // Owned here (not inside Snaps) and mirrored to localStorage so it survives a
+  // Snaps remount or a WebView reload while the native camera was open.
+  const [pendingSnap, setPendingSnapState] = useState(() => readLocalJSON("xlife_pending_snap", null));
+
+  function setPendingSnap(nextSnap) {
+    setPendingSnapState(nextSnap);
+    if (nextSnap) {
+      writeLocalJSON("xlife_pending_snap", nextSnap);
+    } else {
+      try {
+        localStorage.removeItem("xlife_pending_snap");
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // Persist today's log. Writes are debounced because the log can contain
+  // several MB of photo data URLs and was being re-serialised on every
+  // keystroke in Notes. Pending writes are flushed when the app is hidden,
+  // closed, or this shell unmounts, so nothing is lost.
+  const latestLogRef = useRef(log);
+  const pendingWriteRef = useRef(null);
+  useEffect(() => {
+    latestLogRef.current = log;
+    clearTimeout(pendingWriteRef.current);
+    pendingWriteRef.current = setTimeout(() => {
+      pendingWriteRef.current = null;
+      writeLocalJSON("dayflow_log", latestLogRef.current);
+    }, 250);
+  }, [log]);
 
   useEffect(() => {
-    localStorage.setItem("dayflow_log", JSON.stringify(log));
-  }, [log]);
+    function flush() {
+      if (pendingWriteRef.current) {
+        clearTimeout(pendingWriteRef.current);
+        pendingWriteRef.current = null;
+        writeLocalJSON("dayflow_log", latestLogRef.current);
+      }
+    }
+    function handleVisibility() {
+      if (document.visibilityState === "hidden") {
+        flush();
+        writeLocalJSON("dayflow_last_active_at", new Date().toISOString());
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", flush);
+      flush();
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleStorageError() {
+      setStorageWarning("Storage is full, so your latest change could not be saved on this device. Try removing a few photos, then save again.");
+    }
+    window.addEventListener(STORAGE_ERROR_EVENT, handleStorageError);
+    return () => window.removeEventListener(STORAGE_ERROR_EVENT, handleStorageError);
+  }, []);
+
+  // When iOS resumes the app on a new calendar day, reload so the day rolls
+  // over cleanly (today's log is already persisted on every change).
+  useEffect(() => {
+    function handleResume() {
+      if (document.visibilityState === "visible" && localDateISO() !== todayISO) {
+        window.location.reload();
+      }
+    }
+    document.addEventListener("visibilitychange", handleResume);
+    window.addEventListener("focus", handleResume);
+    return () => {
+      document.removeEventListener("visibilitychange", handleResume);
+      window.removeEventListener("focus", handleResume);
+    };
+  }, []);
+
+  function navigate(path) {
+    setRoute(path);
+    window.scrollTo({ top: 0 });
+  }
 
   const totalCalories = useMemo(
     () => log.meals.reduce((sum, meal) => sum + Number(meal.calories || 0), 0),
@@ -700,7 +862,7 @@ function AppShell({ user, onLogout }) {
   );
 
   const pageTitle = {
-    "/": "Dayflow",
+    "/": "Xlife",
     "/meals": "Meals",
     "/snaps": "Snaps",
     "/entertainment": "Fun",
@@ -709,8 +871,8 @@ function AppShell({ user, onLogout }) {
 
   return (
     <div className="min-h-screen bg-[hsl(30_30%_98%)] text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50 font-sans">
-      <div className="mx-auto max-w-2xl min-h-screen pb-24">
-        <header className="sticky top-0 z-30 backdrop-blur-xl bg-[hsl(30_30%_98%)]/85 dark:bg-zinc-950/80 px-5 py-4 flex items-center justify-between">
+      <div className="mx-auto max-w-2xl min-h-screen pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
+        <header className="sticky top-0 z-30 backdrop-blur-xl bg-[hsl(30_30%_98%)]/85 dark:bg-zinc-950/80 px-5 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.25em] text-zinc-400">
               {user?.name ? `hi, ${user.name.split(" ")[0]}` : "personal lifestyle"}
@@ -720,10 +882,17 @@ function AppShell({ user, onLogout }) {
             </h1>
           </div>
 
-          <Button variant="ghost" size="icon" className="rounded-2xl" onClick={onLogout}>
+          <Button variant="ghost" size="icon" className="rounded-2xl" onClick={onLogout} aria-label="Log out">
             <LogOut className="h-5 w-5" />
           </Button>
         </header>
+
+        {storageWarning && (
+          <div className="mx-4 mb-3 flex items-start gap-3 rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-200" role="alert">
+            <p className="flex-1">{storageWarning}</p>
+            <button onClick={() => setStorageWarning("")} className="shrink-0 font-bold" aria-label="Dismiss">✕</button>
+          </div>
+        )}
 
         <main className="px-4 space-y-4">
           {route === "/" && (
@@ -731,19 +900,19 @@ function AppShell({ user, onLogout }) {
               log={log}
               setLog={setLog}
               totals={{ totalCalories, totalProtein, totalSugar }}
-              go={setRoute}
+              go={navigate}
             />
           )}
 
           {route === "/meals" && <Meals log={log} setLog={setLog} />}
-          {route === "/snaps" && <Snaps log={log} setLog={setLog} />}
+          {route === "/snaps" && <Snaps log={log} setLog={setLog} pendingSnap={pendingSnap} setPendingSnap={setPendingSnap} />}
           {route === "/entertainment" && (
             <Entertainment log={log} setLog={setLog} />
           )}
           {route === "/health" && <Health log={log} />}
         </main>
 
-        <BottomNav route={route} setRoute={setRoute} />
+        <BottomNav route={route} setRoute={navigate} />
       </div>
     </div>
   );
@@ -759,14 +928,15 @@ function BottomNav({ route, setRoute }) {
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 px-3 pb-3">
-      <div className="mx-auto max-w-2xl grid grid-cols-5 rounded-3xl border border-white/70 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl shadow-lg">
+    <div className="fixed bottom-0 left-0 right-0 z-50 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+      <div className="mx-auto max-w-2xl grid grid-cols-5 rounded-3xl border border-white/70 bg-white/80 dark:border-zinc-800 dark:bg-zinc-900/80 backdrop-blur-xl shadow-lg">
         {items.map(({ label, path, icon: Icon }) => {
           const active = route === path;
           return (
             <button
               key={path}
               onClick={() => setRoute(path)}
+              aria-current={active ? "page" : undefined}
               className={classNames(
                 "flex flex-col items-center gap-1 py-3 text-[11px] font-semibold transition",
                 active ? "text-[hsl(24_80%_58%)]" : "text-zinc-400"
@@ -866,9 +1036,7 @@ function WorkoutTracker({ log, setLog }) {
   const loggedExercises = log.workout?.exercises || {};
 
   function selectWorkoutType(type) {
-    const savedTemplate = JSON.parse(
-      localStorage.getItem(`dayflow_workout_${type}`) || "{}"
-    );
+    const savedTemplate = readLocalJSON(`dayflow_workout_${type}`, {});
 
     setLog({
       ...log,
@@ -984,29 +1152,45 @@ function WorkoutTracker({ log, setLog }) {
   );
 }
 
+function summarizeWorkout(exercises = {}) {
+  const done = Object.entries(exercises).filter(([, item]) => item?.done);
+  const volume = done.reduce((sum, [, item]) => sum + Number(item.weight || 0) * Number(item.reps || 0), 0);
+  const reps = done.reduce((sum, [, item]) => sum + Number(item.reps || 0), 0);
+  return { doneCount: done.length, volume: Math.round(volume), reps, doneNames: done.map(([name]) => name) };
+}
+
 function Gym({ log, setLog }) {
-  const [savedMessage, setSavedMessage] = useState("");
+  const [error, setError] = useState("");
+  const completed = log.workout?.completed_at ? log.workout : null;
 
   function doneWorkout() {
-    const history = JSON.parse(localStorage.getItem("dayflow_workout_history") || "[]");
-
+    const type = log.workout?.type;
+    const exercises = log.workout?.exercises || {};
+    const summary = summarizeWorkout(exercises);
+    if (type !== "Rest" && summary.doneCount === 0) {
+      setError("Tick at least one exercise as done before finishing.");
+      return;
+    }
+    setError("");
+    const history = readLocalJSON("dayflow_workout_history", []);
+    const now = new Date().toISOString();
     const newWorkout = {
       date: todayISO,
-      type: log.workout?.type,
-      exercises: log.workout?.exercises || {},
-      savedAt: new Date().toISOString(),
+      type,
+      exercises,
+      summary,
+      savedAt: now,
     };
 
-    localStorage.setItem(
-      "dayflow_workout_history",
-      JSON.stringify([newWorkout, ...history])
-    );
-    localStorage.setItem(
-      `dayflow_workout_${newWorkout.type}`,
-      JSON.stringify(newWorkout.exercises)
-    );
+    // Pressing Done twice on the same day used to add duplicate history rows.
+    const withoutToday = (Array.isArray(history) ? history : []).filter((item) => !(item.date === todayISO && item.type === type));
+    writeLocalJSON("dayflow_workout_history", [newWorkout, ...withoutToday]);
+    writeLocalJSON(`dayflow_workout_${type}`, exercises);
+    setLog((current) => ({ ...current, workout: { ...current.workout, completed_at: now, summary } }));
+  }
 
-    setSavedMessage("Workout saved. Next time you do this workout, your weight and reps will be remembered.");
+  function editWorkout() {
+    setLog((current) => ({ ...current, workout: { ...current.workout, completed_at: null } }));
   }
 
   return (
@@ -1015,19 +1199,34 @@ function Gym({ log, setLog }) {
       animate={{ opacity: 1, y: 0 }}
       className="space-y-4"
     >
-      <WorkoutTracker log={log} setLog={setLog} />
-
-      <Button
-        onClick={doneWorkout}
-        className="w-full rounded-2xl py-6 bg-[hsl(24_80%_58%)] text-white"
-      >
-        Done Workout
-      </Button>
-
-      {savedMessage && (
-        <div className="rounded-3xl bg-[hsl(160_50%_45%)]/10 p-4 text-sm text-zinc-700">
-          {savedMessage}
-        </div>
+      {completed ? (
+        <SoftCard>
+          <SectionTitle icon={Dumbbell} title="Workout" />
+          <div className="rounded-3xl bg-[hsl(160_50%_45%)]/10 p-5 text-center" role="status">
+            <p className="text-2xl font-black">Workout Complete 💪</p>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">Another step stronger. Consistency builds progress.</p>
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              <SummaryPill label="Split" value={completed.type} />
+              <SummaryPill label="Exercises" value={completed.summary?.doneCount ?? 0} />
+              <SummaryPill label="Volume" value={`${completed.summary?.volume ?? 0}`} />
+            </div>
+            {completed.summary?.doneNames?.length > 0 && (
+              <p className="mt-3 text-xs text-zinc-500">{completed.summary.doneNames.join(" · ")}</p>
+            )}
+          </div>
+          <Button variant="secondary" onClick={editWorkout} className="mt-3 w-full rounded-2xl py-3">Edit workout</Button>
+        </SoftCard>
+      ) : (
+        <>
+          <WorkoutTracker log={log} setLog={setLog} />
+          {error && <p className="rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-600 dark:bg-rose-950/40 dark:text-rose-200" role="alert">{error}</p>}
+          <Button
+            onClick={doneWorkout}
+            className="w-full rounded-2xl py-6 bg-[hsl(24_80%_58%)] text-white"
+          >
+            Done Workout
+          </Button>
+        </>
       )}
     </motion.div>
   );
@@ -1053,11 +1252,8 @@ function minutesBetweenTimes(start, end) {
 }
 
 function saveSleepHistoryRecord(sleepRecord) {
-  const history = JSON.parse(localStorage.getItem("dayflow_sleep_history") || "[]");
-  localStorage.setItem(
-    "dayflow_sleep_history",
-    JSON.stringify([sleepRecord, ...history.filter((item) => item.date !== sleepRecord.date)])
-  );
+  const history = readLocalJSON("dayflow_sleep_history", []);
+  writeLocalJSON("dayflow_sleep_history", [sleepRecord, ...history.filter((item) => item.date !== sleepRecord.date)]);
 }
 
 function shouldShowWakeConfirmation(sleep) {
@@ -1074,36 +1270,19 @@ function shouldShowWakeConfirmation(sleep) {
   return morningOpen || hoursSinceActive > 5 || needsHealthKitConfirmation;
 }
 
+// Apple HealthKit is NOT integrated yet (no native plugin / entitlement in the
+// iOS project). Earlier builds returned hard-coded numbers here and labelled
+// them "Apple Health", which looked like real data. Until a native plugin is
+// added this reports "not connected" instead of fabricating a sleep record.
 async function syncSleepFromAppleHealth() {
-  // TODO: connect to native HealthKit plugin.
-  // Future native iOS work:
-  // - Enable HealthKit capability in Xcode.
-  // - Request HealthKit permission.
-  // - Read HKCategoryTypeIdentifierSleepAnalysis samples.
-  // - Pass sleep data back to React via Capacitor plugin.
-  return {
-    date: todayISO,
-    source: "apple_health",
-    bedtime: "23:18",
-    wake_time: currentTimeHHMM(),
-    duration_minutes: 504,
-    sleep_quality: "good",
-    sleep_stages: {
-      awake: 31,
-      rem: 96,
-      core: 287,
-      deep: 90,
-    },
-    last_synced_at: new Date().toISOString(),
-    confirmed_awake: false,
-    confirmed_at: null,
-  };
+  return { connected: false };
 }
 
 function SleepHealthKitCard({ log, setLog, requestWakeConfirmation }) {
   const sleep = log.sleep || initialLog.sleep;
   const [manualOpen, setManualOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
 
   function saveSleep(nextSleep) {
     const sleepRecord = {
@@ -1125,20 +1304,27 @@ function SleepHealthKitCard({ log, setLog, requestWakeConfirmation }) {
 
   async function handleHealthKitSync() {
     setSyncing(true);
-    const syncedSleep = await syncSleepFromAppleHealth();
-    saveSleep(syncedSleep);
-    requestWakeConfirmation?.();
+    const result = await syncSleepFromAppleHealth();
+    if (result?.connected && result.sleep) {
+      saveSleep(result.sleep);
+      requestWakeConfirmation?.();
+      setSyncMessage("");
+    } else {
+      setSyncMessage("Apple Health sync isn't connected in this build yet. Use manual entry for now.");
+      setManualOpen(true);
+    }
     setSyncing(false);
   }
 
   function updateManualSleep(field, value) {
     const bedtime = field === "bedtime" ? value : sleep.bedtime;
     const wakeTime = field === "wake_time" ? value : sleep.wake_time;
-    const duration = field === "duration_minutes" ? Number(value) : sleep.duration_minutes;
+    const duration = field === "duration_minutes"
+      ? Number(value)
+      : (bedtime && wakeTime ? minutesBetweenTimes(bedtime, wakeTime) : sleep.duration_minutes);
 
     saveSleep({
       source: "manual",
-      [field]: field === "duration_minutes" ? Number(value) : value,
       bedtime,
       wake_time: wakeTime,
       duration_minutes: duration,
@@ -1173,7 +1359,7 @@ function SleepHealthKitCard({ log, setLog, requestWakeConfirmation }) {
       </div>
 
       <p className="mb-3 rounded-2xl bg-[hsl(24_80%_58%)]/10 p-3 text-sm text-zinc-600 dark:text-zinc-300">
-        Dayflow can read your Apple Health sleep data after you give permission on iPhone.
+        Apple Health sleep sync is planned. For now, enter sleep manually or confirm your wake-up time.
       </p>
 
       <div className="grid grid-cols-2 gap-2">
@@ -1182,7 +1368,7 @@ function SleepHealthKitCard({ log, setLog, requestWakeConfirmation }) {
           className="rounded-2xl bg-[hsl(24_80%_58%)] py-3 text-white"
           disabled={syncing}
         >
-          {syncing ? "Syncing..." : "Sync from Apple Health"}
+          {syncing ? "Checking..." : "Apple Health (soon)"}
         </Button>
         <Button
           variant="secondary"
@@ -1192,6 +1378,10 @@ function SleepHealthKitCard({ log, setLog, requestWakeConfirmation }) {
           Manual entry
         </Button>
       </div>
+
+      {syncMessage && (
+        <p className="mt-3 rounded-2xl bg-zinc-100 p-3 text-sm text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{syncMessage}</p>
+      )}
 
       {manualOpen && (
         <div className="mt-4 grid gap-2">
@@ -1218,7 +1408,7 @@ function SleepHealthKitCard({ log, setLog, requestWakeConfirmation }) {
               placeholder="Minutes asleep"
             />
             <select
-              value={log.sleep_quality}
+              value={log.sleep_quality || ""}
               onChange={(e) => setLog({
                 ...log,
                 sleep_quality: e.target.value,
@@ -1227,8 +1417,9 @@ function SleepHealthKitCard({ log, setLog, requestWakeConfirmation }) {
                   sleep_quality: e.target.value,
                 },
               })}
-              className="rounded-2xl bg-zinc-100 px-3 py-3 outline-none dark:bg-zinc-800"
+              className="field mb-0"
             >
+              <option value="">Sleep quality</option>
               {["great", "good", "okay", "poor"].map((quality) => <option key={quality}>{quality}</option>)}
             </select>
           </div>
@@ -1317,10 +1508,26 @@ function WakeConfirmationSheet({ log, setLog, onClose }) {
 
 function Dashboard({ log, setLog, totals, go }) {
   const mood = moodOptions.find((m) => m.id === log.mood) || moodOptions[2];
-  const progress = Math.min(100, Math.round((totals.totalCalories / log.calorie_goal) * 100));
+  const progress = log.calorie_goal ? Math.min(100, Math.round((totals.totalCalories / log.calorie_goal) * 100)) : 0;
   const [showWakeSheet, setShowWakeSheet] = useState(() => shouldShowWakeConfirmation(log.sleep || initialLog.sleep));
   const [selectedDate, setSelectedDate] = useState(todayISO);
-  const selectedDaySummary = useMemo(() => buildDailyLogSummary(log, selectedDate), [log, selectedDate]);
+  // History only needs re-reading when data that is archived/history-backed
+  // changes, not on every Notes keystroke.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const sources = useMemo(() => readHistorySources(), [log.date, log.meals, log.snaps, log.workout, log.sleep]);
+  const selectedDaySummary = useMemo(() => buildDailyLogSummary(log, selectedDate, sources), [log, selectedDate, sources]);
+  const onThisDay = useMemo(() => getOnThisDayMemories(getAllMemorySnaps(log)), [log]);
+  // Real 7-day averages (days with logged meals only), not today's totals.
+  const weekly = useMemo(() => {
+    const days = Array.from({ length: 7 }, (_, index) => {
+      const date = toLocalDate(todayISO);
+      date.setDate(date.getDate() - index);
+      return buildDailyLogSummary(log, toISODate(date), sources);
+    }).filter((day) => day.meals.length > 0);
+    const count = days.length || 1;
+    const sum = (field) => Math.round(days.reduce((total, day) => total + day.totals[field], 0) / count);
+    return { days: days.length, calories: sum("calories"), protein: sum("protein"), sugar: sum("sugar") };
+  }, [log, sources]);
 
   useEffect(() => {
     localStorage.setItem("dayflow_last_active_at", new Date().toISOString());
@@ -1345,41 +1552,66 @@ function Dashboard({ log, setLog, totals, go }) {
           <SectionTitle icon={Utensils} title="Calories" action={<Button variant="ghost" size="sm" onClick={() => go('/meals')}>Meals <ChevronRight className="h-4 w-4" /></Button>} />
           <div className="h-3 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden"><div className="h-full bg-[hsl(24_80%_58%)]" style={{ width: `${progress}%` }} /></div>
           <p className="text-sm text-zinc-500 mt-2">{totals.totalCalories} kcal logged. {progress}% of daily goal.</p>
-          <div className="mt-3 space-y-2">{log.meals.slice(-3).map((m, i) => <div key={i} className="flex justify-between text-sm"><span>{m.name}</span><span className="text-zinc-500">{m.calories} kcal</span></div>)}</div>
+          <div className="mt-3 space-y-2">{log.meals.slice(-3).map((m, i) => <div key={m.id || i} className="flex justify-between text-sm"><span>{m.name}</span><span className="text-zinc-500">{m.calories} kcal</span></div>)}</div>
         </SoftCard>
 
         <SoftCard>
           <SectionTitle icon={CalendarDays} title="Weekly nutrition" />
-          <NutritionBar label="Avg calories" value={totals.totalCalories} max={2200} unit="kcal" />
-          <NutritionBar label="Protein" value={totals.totalProtein} max={150} unit="g" />
-          <NutritionBar label="Sugar" value={totals.totalSugar} max={80} unit="g" />
+          <p className="-mt-1 mb-3 text-xs text-zinc-500">
+            {weekly.days ? `Daily average over ${weekly.days} logged day${weekly.days === 1 ? "" : "s"} in the last 7 days.` : "Log meals to see your 7-day averages."}
+          </p>
+          <NutritionBar label="Avg calories" value={weekly.calories} max={log.calorie_goal || 2200} unit="kcal" />
+          <NutritionBar label="Avg protein" value={weekly.protein} max={150} unit="g" />
+          <NutritionBar label="Avg sugar" value={weekly.sugar} max={80} unit="g" />
         </SoftCard>
 
         <SoftCard>
           <SectionTitle icon={Smile} title="Mood" />
-          <div className="grid grid-cols-5 gap-2">{moodOptions.map(m => <button key={m.id} onClick={() => setLog({ ...log, mood: m.id })} className={classNames("rounded-2xl py-3 text-2xl", log.mood === m.id ? "bg-[hsl(24_80%_58%)]" : "bg-zinc-100 dark:bg-zinc-800")}>{m.emoji}</button>)}</div>
+          <div className="grid grid-cols-5 gap-2">{moodOptions.map(m => <button key={m.id} aria-label={m.label} aria-pressed={log.mood === m.id} onClick={() => setLog((current) => ({ ...current, mood: current.mood === m.id ? "" : m.id }))} className={classNames("rounded-2xl py-3 text-2xl", log.mood === m.id ? "bg-[hsl(24_80%_58%)]" : "bg-zinc-100 dark:bg-zinc-800")}>{m.emoji}</button>)}</div>
         </SoftCard>
 
         <SoftCard>
           <SectionTitle icon={NotebookPen} title="Notes" />
-          <textarea value={log.notes} onChange={(e) => setLog({ ...log, notes: e.target.value })} className="w-full min-h-24 rounded-2xl bg-zinc-100 dark:bg-zinc-800 px-4 py-3 outline-none" />
+          <textarea value={log.notes || ""} placeholder="How was your day?" onChange={(e) => { const notes = e.target.value; setLog((current) => ({ ...current, notes })); }} className="w-full min-h-24 rounded-2xl bg-zinc-100 dark:bg-zinc-800 px-4 py-3 outline-none" />
         </SoftCard>
 
         <SoftCard>
           <SectionTitle icon={Camera} title="Today's snaps" action={<Button variant="ghost" size="sm" onClick={() => go('/snaps')}>Open</Button>} />
-          <div className="grid grid-cols-3 gap-2">{log.snaps.map((s, i) => <img key={i} src={s.url} className="aspect-square object-cover rounded-2xl" alt={s.caption} />)}</div>
+          {log.snaps.length ? (
+            <div className="grid grid-cols-3 gap-2">{log.snaps.map((s, i) => <img key={`${s.taken_at || i}-${i}`} src={s.url} decoding="async" className="aspect-square object-cover rounded-2xl" alt={s.caption || "Snap"} />)}</div>
+          ) : (
+            <p className="text-sm text-zinc-500">No snaps yet today. Open Snaps to capture one.</p>
+          )}
         </SoftCard>
+
+        {onThisDay.length > 0 && (
+          <SoftCard>
+            <SectionTitle icon={Sparkles} title="On this day" />
+            <div className="space-y-3">
+              {onThisDay.map((group) => (
+                <div key={group.iso}>
+                  <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-zinc-400">{group.label} · {group.iso}</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {group.snaps.slice(0, 3).map((snap, index) => (
+                      <img key={`${snap.id || snap.taken_at || "m"}-${index}`} src={snap.url} loading="lazy" decoding="async" className="aspect-square rounded-2xl object-cover" alt={snap.caption || "Memory"} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </SoftCard>
+        )}
 
         <SoftCard>
           <SectionTitle icon={CalendarDays} title="Day calendar" />
-          <DayCalendar selectedDate={selectedDate} setSelectedDate={setSelectedDate} log={log} />
+          <DayCalendar selectedDate={selectedDate} setSelectedDate={setSelectedDate} log={log} sources={sources} />
           <div className="mt-4 border-t border-zinc-100 pt-4 dark:border-zinc-800">
             <p className="mb-3 text-lg font-black">Daily Log Summary</p>
             <DailyLogSummary summary={selectedDaySummary} />
           </div>
         </SoftCard>
 
-        <Button className="w-full rounded-2xl py-6 bg-[hsl(24_80%_58%)] hover:bg-[hsl(24_80%_52%)]">Export last 30 days PDF</Button>
+        <Button disabled className="w-full rounded-2xl py-6 bg-[hsl(24_80%_58%)]/50 cursor-not-allowed" title="Not built yet">Export last 30 days PDF (coming soon)</Button>
       </motion.div>
 
       {showWakeSheet && (
@@ -1402,43 +1634,67 @@ function NutritionBar({ label, value, max, unit }) {
   return <div className="mb-3"><div className="flex justify-between text-sm mb-1"><span>{label}</span><span className="text-zinc-500">{value}{unit}</span></div><div className="h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden"><div className="h-full bg-[hsl(160_50%_45%)]" style={{ width: `${pct}%` }} /></div></div>;
 }
 
-function readLocalJSON(key, fallback) {
-  try {
-    return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-  } catch {
-    return fallback;
-  }
-}
-
 function recordsForDate(source, dateISO) {
   if (!source) return [];
   if (Array.isArray(source)) {
-    return source.filter((item) => item && typeof item === "object" && (item.date || item.createdAt?.slice(0, 10) || item.taken_at?.slice(0, 10)) === dateISO);
+    return source.filter((item) => item && typeof item === "object" && recordLocalDate(item) === dateISO);
   }
   if (source[dateISO]) return Array.isArray(source[dateISO]) ? source[dateISO] : [source[dateISO]];
-  return Object.values(source).flat().filter((item) => item && typeof item === "object" && (item.date || item.createdAt?.slice(0, 10) || item.taken_at?.slice(0, 10)) === dateISO);
+  return Object.values(source).flat().filter((item) => item && typeof item === "object" && recordLocalDate(item) === dateISO);
 }
 
-function buildDailyLogSummary(log, selectedDate) {
-  const dailyLogs = readLocalJSON("dayflow_daily_logs", {});
-  const sleepHistory = readLocalJSON("dayflow_sleep_history", []);
-  const periodLogs = readLocalJSON("dayflow_period_logs", {});
-  const workoutHistory = readLocalJSON("dayflow_workout_history", []);
-  const spendingRecords = readLocalJSON("dayflow_spending", []);
-  const savedLog = recordsForDate(dailyLogs, selectedDate)[0] || {};
-  const isToday = selectedDate === todayISO;
+// Read every history source once (instead of once per calendar cell).
+function readHistorySources() {
+  return {
+    dailyLogs: readLocalJSON("dayflow_daily_logs", {}),
+    sleepHistory: readLocalJSON("dayflow_sleep_history", []),
+    periodLogs: readLocalJSON("dayflow_period_logs", {}),
+    workoutHistory: readLocalJSON("dayflow_workout_history", []),
+    spendingRecords: readLocalJSON("dayflow_spending", []),
+    mealHistory: readLocalJSON("dayflow_meal_history", []),
+    storedSnaps: [
+      ...readLocalJSON("dayflow_snaps", []),
+      ...readLocalJSON("dayflow_memories", []),
+    ],
+  };
+}
 
-  const sleep = isToday ? (log.sleep || savedLog.sleep || initialLog.sleep) : (recordsForDate(sleepHistory, selectedDate)[0] || savedLog.sleep);
-  const meals = isToday ? (log.meals || []) : (savedLog.meals || recordsForDate(readLocalJSON("dayflow_meal_history", []), selectedDate));
-  const workoutRecords = isToday && log.workout ? [{ date: todayISO, ...log.workout }] : recordsForDate(workoutHistory, selectedDate);
-  const storedSnaps = [
-    ...recordsForDate(readLocalJSON("dayflow_snaps", []), selectedDate),
-    ...recordsForDate(readLocalJSON("dayflow_memories", []), selectedDate),
-  ];
-  const snaps = (isToday ? log.snaps : log.snaps.filter((snap) => snap.date === selectedDate || snap.taken_at?.slice(0, 10) === selectedDate))
-    .concat(savedLog.snaps || [])
-    .concat(storedSnaps)
-    .filter((snap, index, all) => all.findIndex((item) => item.url === snap.url) === index);
+function hasSleepData(sleep) {
+  return Boolean(sleep && (sleep.wake_time || sleep.bedtime || Number(sleep.duration_minutes || 0) > 0));
+}
+
+function buildDailyLogSummary(log, selectedDate, sources = readHistorySources()) {
+  const { dailyLogs, sleepHistory, periodLogs, workoutHistory, spendingRecords, mealHistory, storedSnaps } = sources;
+  const isToday = selectedDate === todayISO;
+  // Today always comes from the live log; past dates come only from archives
+  // and history, never from today's log.
+  const savedLog = isToday ? {} : (recordsForDate(dailyLogs, selectedDate)[0] || {});
+
+  const historySleep = recordsForDate(sleepHistory, selectedDate)[0];
+  const sleepCandidate = isToday ? (log.sleep || historySleep) : (historySleep || savedLog.sleep);
+  const sleep = hasSleepData(sleepCandidate) ? sleepCandidate : null;
+
+  const archivedMeals = (savedLog.meals || []).filter((meal) => {
+    const mealDate = recordLocalDate(meal);
+    return !mealDate || mealDate === selectedDate;
+  });
+  const meals = isToday
+    ? (log.meals || [])
+    : (archivedMeals.length ? archivedMeals : recordsForDate(mealHistory, selectedDate));
+
+  const todayWorkoutHasEntries = Object.keys(log.workout?.exercises || {}).length > 0;
+  const workoutRecords = isToday
+    ? [
+        ...recordsForDate(workoutHistory, selectedDate),
+        ...(todayWorkoutHasEntries && !recordsForDate(workoutHistory, selectedDate).length ? [{ date: todayISO, ...log.workout }] : []),
+      ]
+    : recordsForDate(workoutHistory, selectedDate);
+
+  const allArchivedSnaps = Object.values(dailyLogs || {}).flatMap((day) => (day?.snaps || []).map((snap) => ({ date: day.date, ...snap })));
+  const snaps = mergeByUrl(
+    isToday ? (log.snaps || []) : [],
+    [...allArchivedSnaps, ...storedSnaps].filter((snap) => recordLocalDate(snap) === selectedDate)
+  );
   const spending = recordsForDate(spendingRecords, selectedDate);
   const cycle = periodLogs[selectedDate] || savedLog.cycle;
   const mood = isToday ? log.mood : savedLog.mood;
@@ -1466,7 +1722,7 @@ function buildDailyLogSummary(log, selectedDate) {
   };
 }
 
-function DayCalendar({ selectedDate, setSelectedDate, log }) {
+function DayCalendar({ selectedDate, setSelectedDate, log, sources }) {
   const [visibleMonth, setVisibleMonth] = useState(() => toLocalDate(selectedDate));
   const firstOfMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
   const firstDay = firstOfMonth.getDay();
@@ -1477,7 +1733,7 @@ function DayCalendar({ selectedDate, setSelectedDate, log }) {
   ];
 
   function indicatorsFor(dateISO) {
-    const summary = buildDailyLogSummary(log, dateISO);
+    const summary = buildDailyLogSummary(log, dateISO, sources);
     return {
       meal: summary.meals.length > 0,
       workout: summary.workoutRecords.length > 0,
@@ -1510,6 +1766,8 @@ function DayCalendar({ selectedDate, setSelectedDate, log }) {
             <button
               key={dateISO}
               onClick={() => setSelectedDate(dateISO)}
+              aria-label={toLocalDate(dateISO).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+              aria-pressed={isSelected}
               className={classNames(
                 "flex aspect-square flex-col items-center justify-center rounded-xl text-xs font-bold transition",
                 isSelected ? "bg-[hsl(24_80%_58%)] text-white" : "bg-zinc-100 dark:bg-zinc-800",
@@ -1569,7 +1827,7 @@ function DailyLogSummary({ summary }) {
         </div>
         <div className="rounded-3xl bg-white p-4 shadow-sm dark:bg-zinc-900">
           <p className="font-bold">Snaps</p>
-          {summary.snaps.length ? <div className="mt-2 grid grid-cols-3 gap-2">{summary.snaps.map((snap, index) => <img key={`${snap.url}-${index}`} src={snap.url} className="aspect-square rounded-2xl object-cover" alt={snap.caption || "Snap"} />)}</div> : <p className="mt-1 text-sm text-zinc-500">No photos.</p>}
+          {summary.snaps.length ? <div className="mt-2 grid grid-cols-3 gap-2">{summary.snaps.map((snap, index) => <img key={`${snap.id || snap.taken_at || "snap"}-${index}`} src={snap.url} loading="lazy" decoding="async" className="aspect-square rounded-2xl object-cover" alt={snap.caption || "Snap"} />)}</div> : <p className="mt-1 text-sm text-zinc-500">No photos.</p>}
         </div>
         <div className="rounded-3xl bg-white p-4 shadow-sm dark:bg-zinc-900">
           <p className="font-bold">Cycle</p>
@@ -1592,9 +1850,9 @@ function Meals({ log, setLog }) {
   const [restaurantSearch, setRestaurantSearch] = useState("");
   const [selectedCuisine, setSelectedCuisine] = useState("");
   const [suggestionRefreshSeed, setSuggestionRefreshSeed] = useState(0);
-  const [rejectedFoodSuggestions, setRejectedFoodSuggestions] = useState(() => JSON.parse(localStorage.getItem("dayflow_rejected_food_suggestions") || "[]"));
-  const [savedFoodSuggestions, setSavedFoodSuggestions] = useState(() => JSON.parse(localStorage.getItem("dayflow_saved_food_suggestions") || "[]"));
-  const [mealHistory, setMealHistory] = useState(() => JSON.parse(localStorage.getItem("dayflow_meal_history") || "[]"));
+  const [rejectedFoodSuggestions, setRejectedFoodSuggestions] = useState(() => readLocalJSON("dayflow_rejected_food_suggestions", []));
+  const [savedFoodSuggestions, setSavedFoodSuggestions] = useState(() => readLocalJSON("dayflow_saved_food_suggestions", []));
+  const [mealHistory, setMealHistory] = useState(() => readLocalJSON("dayflow_meal_history", []));
   const [foodPhotoPreview, setFoodPhotoPreview] = useState("");
   const [restaurantForm, setRestaurantForm] = useState({
     name: "",
@@ -1607,30 +1865,30 @@ function Meals({ log, setLog }) {
     photo_url: "",
   });
   const [restaurantCatalog, setRestaurantCatalog] = useState(() => {
-    const savedRestaurants = localStorage.getItem("dayflow_restaurants");
-    const seededRestaurants = savedRestaurants
-      ? JSON.parse(savedRestaurants).map(createRestaurantRecord)
+    const savedRestaurants = readLocalJSON("dayflow_restaurants", null);
+    const seededRestaurants = Array.isArray(savedRestaurants)
+      ? savedRestaurants.map(createRestaurantRecord)
       : defaultRestaurants.map(createRestaurantRecord);
     if (!savedRestaurants) {
-      localStorage.setItem("dayflow_restaurants", JSON.stringify(seededRestaurants));
+      writeLocalJSON("dayflow_restaurants", seededRestaurants);
     }
     return seededRestaurants;
   });
 
   useEffect(() => {
-    localStorage.setItem("dayflow_restaurants", JSON.stringify(restaurantCatalog));
+    writeLocalJSON("dayflow_restaurants", restaurantCatalog);
   }, [restaurantCatalog]);
 
   useEffect(() => {
-    localStorage.setItem("dayflow_meal_history", JSON.stringify(mealHistory));
+    writeLocalJSON("dayflow_meal_history", mealHistory);
   }, [mealHistory]);
 
   useEffect(() => {
-    localStorage.setItem("dayflow_rejected_food_suggestions", JSON.stringify(rejectedFoodSuggestions));
+    writeLocalJSON("dayflow_rejected_food_suggestions", rejectedFoodSuggestions);
   }, [rejectedFoodSuggestions]);
 
   useEffect(() => {
-    localStorage.setItem("dayflow_saved_food_suggestions", JSON.stringify(savedFoodSuggestions));
+    writeLocalJSON("dayflow_saved_food_suggestions", savedFoodSuggestions);
   }, [savedFoodSuggestions]);
 
   const filteredRestaurants = useMemo(() => {
@@ -1693,17 +1951,50 @@ function Meals({ log, setLog }) {
 
   const noVisibleFoodSuggestions = generatedFoodSuggestions.length > 0 && smartFoodSuggestions.length === 0;
 
+  const [mealMessage, setMealMessage] = useState("");
+
+  // Logs one meal to today's log and to meal history (history copy has no
+  // photo, so images are not stored twice).
+  function logMeal(fields) {
+    const now = new Date();
+    const nextMeal = {
+      id: createId(),
+      date: todayISO,
+      type: fields.type || form.type,
+      meal_type: fields.type || form.type,
+      name: fields.name,
+      calories: Number(fields.calories || 0),
+      protein_g: Number(fields.protein_g || 0),
+      sugar_g: Number(fields.sugar_g || 0),
+      cost: Number(fields.cost || 0),
+      rating: Number(fields.rating || 0),
+      cuisine: fields.cuisine || "",
+      restaurant_name: fields.restaurant_name || "",
+      notes: fields.notes || "",
+      photo_url: fields.photo_url || "",
+      time: now.toTimeString().slice(0, 5),
+      createdAt: now.toISOString(),
+    };
+    setLog((current) => ({ ...current, meals: [...(current.meals || []), nextMeal] }));
+    setMealHistory((current) => [...current, { ...nextMeal, photo_url: "" }]);
+    setMealMessage(`Added ${nextMeal.name} to today's ${nextMeal.type}.`);
+    return nextMeal;
+  }
+
   function addMeal() {
-    if (!form.name || !form.calories) return;
-    const nextMeal = { ...form, id: crypto.randomUUID(), time: new Date().toTimeString().slice(0, 5), calories: Number(form.calories), protein_g: Number(form.protein_g || 0), sugar_g: Number(form.sugar_g || 0), cost: Number(form.cost || 0), createdAt: new Date().toISOString() };
-    setLog({ ...log, meals: [...log.meals, nextMeal] });
-    setMealHistory([...mealHistory, nextMeal]);
-    setForm({ ...form, name: "", calories: "", protein_g: "", sugar_g: "", cost: "", photo_url: "" });
+    if (!form.name.trim() || form.calories === "") {
+      setMealMessage("Add a meal name and calories first.");
+      return;
+    }
+    logMeal({ ...form, name: form.name.trim() });
+    setForm({ ...form, name: "", calories: "", protein_g: "", sugar_g: "", cost: "", photo_url: "", cuisine: "", restaurant_name: "" });
     setFoodPhotoPreview("");
   }
 
-  function removeMeal(index) {
-    setLog({ ...log, meals: log.meals.filter((_, i) => i !== index) });
+  function removeMeal(meal, index) {
+    setLog((current) => ({ ...current, meals: (current.meals || []).filter((item, i) => (meal.id ? item.id !== meal.id : i !== index)) }));
+    // Keep recommendations/history consistent with the deletion.
+    if (meal.id) setMealHistory((current) => current.filter((item) => item.id !== meal.id));
   }
 
   function pickSuggestion(s) {
@@ -1723,6 +2014,8 @@ function Meals({ log, setLog }) {
   }
 
   function deleteRestaurant(restaurantId) {
+    const restaurant = restaurantCatalog.find((item) => item.id === restaurantId);
+    if (!window.confirm(`Delete ${restaurant?.name || "this restaurant"} and its notes/photos?`)) return;
     setRestaurantCatalog(restaurantCatalog.filter((restaurant) => restaurant.id !== restaurantId));
   }
 
@@ -1735,18 +2028,15 @@ function Meals({ log, setLog }) {
     )));
   }
 
+  // "Add to meal" used to only pre-fill the form at the top of the page, so
+  // nothing visibly happened. It now logs the item directly.
   function addMenuItemToMeal(item, restaurant = {}) {
-    setForm({
-      ...form,
-      name: item.name,
-      calories: item.calories,
-      protein_g: item.protein_g,
-      sugar_g: item.sugar_g,
-      cost: item.cost,
+    logMeal({
+      ...item,
       rating: item.rating || form.rating,
-      cuisine: restaurant.cuisine || form.cuisine,
-      restaurant_name: restaurant.name || form.restaurant_name,
-      photo_url: restaurant.photo_url || item.photo_url || form.photo_url,
+      cuisine: restaurant.cuisine,
+      restaurant_name: restaurant.name,
+      photo_url: "",
     });
   }
 
@@ -1778,7 +2068,7 @@ function Meals({ log, setLog }) {
       restaurant.id === suggestion.restaurant?.id || restaurant.name === suggestion.restaurant_name
     ));
     const savedMenuItem = {
-      id: suggestion.item?.id || crypto.randomUUID(),
+      id: suggestion.item?.id || createId(),
       name: suggestion.name,
       calories: Number(suggestion.calories || 0),
       protein_g: Number(suggestion.protein_g || 0),
@@ -1823,18 +2113,21 @@ function Meals({ log, setLog }) {
     ]);
   }
 
+  // Previously this pre-filled the form AND wrote the whole suggestion object
+  // (including nested restaurant photos) into meal history as if it had been
+  // eaten, without adding it to today's meals. Now it logs one clean meal.
   function addCatalogSuggestionToMeal(suggestion) {
     if (!suggestion) return;
-    pickSuggestion(suggestion);
-    setMealHistory([
-      ...mealHistory,
-      {
-        ...suggestion,
-        type: form.type,
-        meal_type: form.type,
-        addedFromSuggestionAt: new Date().toISOString(),
-      },
-    ]);
+    logMeal({
+      name: suggestion.name,
+      calories: suggestion.calories,
+      protein_g: suggestion.protein_g,
+      sugar_g: suggestion.sugar_g,
+      cost: suggestion.cost,
+      rating: suggestion.rating,
+      cuisine: suggestion.cuisine,
+      restaurant_name: suggestion.restaurant_name === "Meal history" ? "" : suggestion.restaurant_name,
+    });
   }
 
   function refreshFoodSuggestions() {
@@ -1845,40 +2138,35 @@ function Meals({ log, setLog }) {
     return Boolean(suggestion?.saved || savedFoodSuggestions.some((item) => item.key === suggestion?.key));
   }
 
-  function handleRestaurantPhotoUpload(event) {
+  // Photos are compressed to JPEG data URLs before saving so they persist and
+  // do not exhaust the WebView's localStorage quota.
+  async function handleRestaurantPhotoUpload(event) {
     const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setRestaurantForm({ ...restaurantForm, photo_url: String(reader.result) });
-    };
-    reader.readAsDataURL(file);
     event.target.value = "";
+    if (!file) return;
+    const photoUrl = await fileToPersistentDataUrl(file).catch(() => "");
+    if (photoUrl) setRestaurantForm((current) => ({ ...current, photo_url: photoUrl }));
   }
 
-  function handleFoodPhotoUpload(event) {
+  async function handleFoodPhotoUpload(event) {
     const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const photoUrl = String(reader.result);
-      setFoodPhotoPreview(photoUrl);
-      setForm({ ...form, photo_url: photoUrl });
-    };
-    reader.readAsDataURL(file);
     event.target.value = "";
+    if (!file) return;
+    const photoUrl = await fileToPersistentDataUrl(file).catch(() => "");
+    if (!photoUrl) return;
+    setFoodPhotoPreview(photoUrl);
+    setForm((current) => ({ ...current, photo_url: photoUrl }));
   }
 
   return <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
     <SoftCard>
       <SectionTitle icon={Utensils} title="Log a meal" />
+      {mealMessage && <p className="mb-3 rounded-2xl bg-[hsl(160_50%_45%)]/10 p-3 text-sm font-semibold text-zinc-700 dark:text-zinc-200" role="status">{mealMessage}</p>}
       <div className="grid grid-cols-4 gap-2 mb-3">{['breakfast','lunch','dinner','snack'].map(t => <button key={t} onClick={() => setForm({ ...form, type: t })} className={classNames("rounded-2xl py-2 text-xs capitalize", form.type === t ? "bg-[hsl(24_80%_58%)] text-white" : "bg-zinc-100 dark:bg-zinc-800")}>{t}</button>)}</div>
       <input className="field" placeholder="Meal name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
       <div className="grid grid-cols-3 gap-2"><input className="field" placeholder="Calories" type="number" value={form.calories} onChange={(e) => setForm({ ...form, calories: e.target.value })} /><input className="field" placeholder="Protein g" type="number" value={form.protein_g} onChange={(e) => setForm({ ...form, protein_g: e.target.value })} /><input className="field" placeholder="Sugar g" type="number" value={form.sugar_g} onChange={(e) => setForm({ ...form, sugar_g: e.target.value })} /></div>
       <div className="grid grid-cols-2 gap-2"><input className="field" placeholder="Cost" type="number" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} /><select className="field" value={form.rating} onChange={(e) => setForm({ ...form, rating: Number(e.target.value) })}>{[1,2,3,4,5].map(n => <option key={n} value={n}>{n} stars</option>)}</select></div>
-      <div className="flex gap-2 mt-2"><Button onClick={addMeal} className="flex-1 rounded-2xl bg-[hsl(24_80%_58%)]"><Plus className="h-4 w-4 mr-1" /> Add</Button><Button variant="secondary" className="rounded-2xl" onClick={() => setSuggestions(smartFoodSuggestions.length ? smartFoodSuggestions.slice(0, 4) : mealSuggestions[form.type].map((item) => ({ ...item, key: suggestionKey(item.name), reason: "Starter idea until Dayflow learns more from your meals." })))}>AI ideas</Button></div>
+      <div className="flex gap-2 mt-2"><Button onClick={addMeal} className="flex-1 rounded-2xl bg-[hsl(24_80%_58%)]"><Plus className="h-4 w-4 mr-1" /> Add</Button><Button variant="secondary" className="rounded-2xl" onClick={() => setSuggestions(smartFoodSuggestions.length ? smartFoodSuggestions.slice(0, 4) : mealSuggestions[form.type].map((item) => ({ ...item, key: suggestionKey(item.name), reason: "Starter idea until Xlife learns more from your meals." })))}>Ideas</Button></div>
       {suggestions.length > 0 && <div className="mt-3 grid gap-2">{suggestions.map((s) => <button key={s.key || s.name} onClick={() => pickSuggestion(s)} className="text-left bg-zinc-100 dark:bg-zinc-800 rounded-2xl p-3 text-sm"><b>{s.name}</b><p className="text-zinc-500">{s.calories} kcal · {s.protein_g}g protein · {s.reason}</p></button>)}</div>}
     </SoftCard>
 
@@ -1908,7 +2196,8 @@ function Meals({ log, setLog }) {
       {catalogTab === "browse" && (
         <div className="space-y-4">
           <div className="rounded-3xl bg-[hsl(30_30%_98%)] p-4 dark:bg-zinc-800">
-            <p className="font-bold">Find nearby restaurants</p>
+            <p className="font-bold">Search your restaurants</p>
+            <p className="mt-1 text-xs text-zinc-500">Searches restaurants you have saved on this phone. Live nearby search is not connected yet.</p>
             <input
               className="field mt-3"
               placeholder="Location, restaurant, or menu item"
@@ -1938,7 +2227,7 @@ function Meals({ log, setLog }) {
           <div className="rounded-3xl bg-white p-4 shadow-sm dark:bg-zinc-900">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-bold uppercase text-[hsl(160_50%_45%)]">AI pick</p>
+                <p className="text-xs font-bold uppercase text-[hsl(160_50%_45%)]">Smart pick</p>
                 <p className="text-lg font-black">Recommended for you</p>
               </div>
               <Button variant="secondary" onClick={refreshFoodSuggestions} className="rounded-2xl px-3 py-2 text-xs">
@@ -1946,7 +2235,7 @@ function Meals({ log, setLog }) {
               </Button>
             </div>
             <p className="mb-3 text-sm text-zinc-500">
-              Suggestions improve as you log meals, rate them, reject them, and save favorites.
+              Ranked on this phone from your meals, ratings, rejections, and saved favorites. Not live restaurant data.
             </p>
 
             {noVisibleFoodSuggestions || smartFoodSuggestions.length === 0 ? (
@@ -1965,7 +2254,7 @@ function Meals({ log, setLog }) {
                       />
                     ) : (
                       <div className="flex h-36 items-center justify-center rounded-3xl bg-[hsl(160_50%_45%)]/10 text-sm font-bold text-[hsl(160_50%_45%)]">
-                        AI menu pick
+                        Menu idea
                       </div>
                     )}
 
@@ -2026,7 +2315,7 @@ function Meals({ log, setLog }) {
                     <p className="text-sm text-zinc-500">{restaurant.cuisine || "Cuisine"} · {restaurant.location || "Location"}</p>
                     {restaurant.notes && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{restaurant.notes}</p>}
                   </div>
-                  <Button variant="secondary" size="icon" onClick={() => deleteRestaurant(restaurant.id)}>
+                  <Button variant="secondary" size="icon" aria-label={`Delete ${restaurant.name}`} onClick={() => deleteRestaurant(restaurant.id)}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
@@ -2048,7 +2337,7 @@ function Meals({ log, setLog }) {
                             </p>
                             {item.notes && <p className="mt-1 text-xs text-zinc-500">{item.notes}</p>}
                           </div>
-                          <Button variant="secondary" size="icon" onClick={() => deleteMenuItem(restaurant.id, item.id)}>
+                          <Button variant="secondary" size="icon" aria-label={`Delete ${item.name}`} onClick={() => deleteMenuItem(restaurant.id, item.id)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -2121,150 +2410,185 @@ function Meals({ log, setLog }) {
 
     <SoftCard>
       <SectionTitle icon={Star} title="Today's meals" />
-      <div className="space-y-2">{log.meals.map((meal, i) => <div key={i} className="flex items-center justify-between rounded-2xl bg-zinc-100 dark:bg-zinc-800 p-3"><div><p className="font-semibold">{meal.name}</p><p className="text-xs text-zinc-500 capitalize">{meal.type} · {meal.calories} kcal</p></div><div className="flex gap-2"><Button variant="secondary" size="icon" onClick={() => removeMeal(i)}><Trash2 className="h-4 w-4" /></Button></div></div>)}</div>
+      <div className="space-y-2">{log.meals.length === 0 && <p className="text-sm text-zinc-500">No meals logged today yet.</p>}{log.meals.map((meal, i) => <div key={meal.id || i} className="flex items-center justify-between rounded-2xl bg-zinc-100 dark:bg-zinc-800 p-3"><div><p className="font-semibold">{meal.name}</p><p className="text-xs text-zinc-500 capitalize">{meal.meal_type || meal.type} · {meal.calories} kcal</p></div><div className="flex gap-2"><Button variant="secondary" size="icon" aria-label={`Remove ${meal.name}`} onClick={() => removeMeal(meal, i)}><Trash2 className="h-4 w-4" /></Button></div></div>)}</div>
     </SoftCard>
   </motion.div>;
 }
 
-function Snaps({ log, setLog }) {
-  const [preview, setPreview] = useState("");
+const emptyFoodForm = { meal_type: getMealTypeForNow(), name: "", calories: "", protein_g: "", sugar_g: "", cost: "", rating: 0, notes: "" };
+const emptySpendingForm = { item_name: "", amount: "", category: "Food", merchant: "", notes: "" };
+
+function Snaps({ log, setLog, pendingSnap, setPendingSnap }) {
+  // `pendingSnap` is owned by AppShell (and mirrored to localStorage) so the
+  // review screen cannot be lost if this component remounts while the native
+  // camera is open. This was the cause class behind "the first photo after
+  // launch sometimes skips the Save Memory / Mark Food / Track Spending screen".
+  const preview = pendingSnap?.url || "";
   const [caption, setCaption] = useState("");
   const [cameraFacing, setCameraFacing] = useState("rear");
   const [captureMode, setCaptureMode] = useState("memory");
-  const [foodForm, setFoodForm] = useState({
-    meal_type: "lunch",
-    name: "",
-    calories: "",
-    protein_g: "",
-    sugar_g: "",
-    cost: "",
-    rating: 0,
-    notes: "",
-  });
-  const [spendingForm, setSpendingForm] = useState({
-    item_name: "",
-    amount: "",
-    category: "Food",
-    merchant: "",
-    notes: "",
-  });
+  const [foodForm, setFoodForm] = useState(() => ({ ...emptyFoodForm, meal_type: getMealTypeForNow() }));
+  const [spendingForm, setSpendingForm] = useState(emptySpendingForm);
   const [spendingSavedMessage, setSpendingSavedMessage] = useState("");
-  const [spendingRecords, setSpendingRecords] = useState(() => JSON.parse(localStorage.getItem("dayflow_spending") || "[]"));
+  const [spendingRecords, setSpendingRecords] = useState(() => readLocalJSON("dayflow_spending", []));
+  const [capturing, setCapturing] = useState(false);
+  const [captureError, setCaptureError] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
+  const capturingRef = useRef(false);
+  const cameraInputRef = useRef(null);
+  const galleryInputRef = useRef(null);
+  const reviewRef = useRef(null);
   const todaySnaps = log.snaps.filter((snap) => (!snap.date || snap.date === todayISO) && (!snap.type || snap.type === "memory"));
+  const memoryStreak = useMemo(() => getMemoryStreak(getAllMemorySnaps(log)), [log]);
   const todaySpendingTotal = spendingRecords
     .filter((record) => record.date === todayISO)
     .reduce((sum, record) => sum + Number(record.amount || 0), 0);
 
   useEffect(() => {
-    localStorage.setItem("dayflow_spending", JSON.stringify(spendingRecords));
+    writeLocalJSON("dayflow_spending", spendingRecords);
   }, [spendingRecords]);
 
-  function captureSnap() {
-    const captured = cameraFacing === "rear"
-      ? "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=900&auto=format&fit=crop"
-      : "https://images.unsplash.com/photo-1519741497674-611481863552?q=80&w=900&auto=format&fit=crop";
-    setPreview(captured);
+  // Bring the three-option review panel into view as soon as a photo arrives.
+  useEffect(() => {
+    if (preview) {
+      reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [preview]);
+
+  function showCapturedPhoto(url, source) {
+    if (!url) return;
     resetCaptureForms();
+    setSaveMessage("");
+    setPendingSnap({ url, source, captured_at: new Date().toISOString() });
   }
 
-  function handleFileUpload(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  async function runCapture(kind) {
+    // Guard against double taps / re-entry while the native UI is opening.
+    if (capturingRef.current) return;
+    setCaptureError("");
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPreview(String(reader.result));
-      resetCaptureForms();
-    };
-    reader.readAsDataURL(file);
+    if (!isNativeCamera()) {
+      // Web / dev fallback: the browser's own camera or file picker.
+      (kind === "camera" ? cameraInputRef : galleryInputRef).current?.click();
+      return;
+    }
+
+    capturingRef.current = true;
+    setCapturing(true);
+    try {
+      const url = kind === "camera"
+        ? await captureNativePhoto({ facing: cameraFacing })
+        : await chooseNativePhoto();
+      if (url) showCapturedPhoto(url, kind);
+    } catch (error) {
+      console.error("[xlife] capture failed", error);
+      setCaptureError(isPermissionDenied(error)
+        ? "Xlife doesn't have permission. Allow Camera and Photos for Xlife in iPhone Settings, then try again."
+        : "Couldn't get that photo. Please try again.");
+    } finally {
+      capturingRef.current = false;
+      setCapturing(false);
+    }
+  }
+
+  async function handleFileUpload(event) {
+    const file = event.target.files?.[0];
     event.target.value = "";
+    if (!file) return;
+    setCapturing(true);
+    try {
+      const url = await fileToPersistentDataUrl(file);
+      showCapturedPhoto(url, "upload");
+    } catch (error) {
+      console.error("[xlife] upload failed", error);
+      setCaptureError("Couldn't read that photo. Please try another one.");
+    } finally {
+      setCapturing(false);
+    }
   }
 
   function resetCaptureForms() {
     setCaption("");
     setCaptureMode("memory");
-    setFoodForm({ meal_type: "lunch", name: "", calories: "", protein_g: "", sugar_g: "", cost: "", rating: 0, notes: "" });
-    setSpendingForm({ item_name: "", amount: "", category: "Food", merchant: "", notes: "" });
+    setFoodForm({ ...emptyFoodForm, meal_type: getMealTypeForNow() });
+    setSpendingForm(emptySpendingForm);
     setSpendingSavedMessage("");
   }
 
   function clearCapture() {
-    setPreview("");
+    setPendingSnap(null);
     resetCaptureForms();
   }
 
   function saveMemory() {
     if (!preview) return;
-    setLog({
-      ...log,
+    setLog((current) => ({
+      ...current,
       snaps: [
-        ...log.snaps,
+        ...(current.snaps || []),
         {
+          id: createId(),
           url: preview,
-          caption: caption || "A Dayflow moment",
+          caption: caption || "An Xlife moment",
           date: todayISO,
           taken_at: new Date().toISOString(),
           type: "memory",
         },
       ],
-    });
+    }));
     clearCapture();
-  }
-
-  function estimateFoodFromPhoto() {
-    const estimate = {
-      name: "Grilled chicken rice bowl",
-      calories: 560,
-      protein_g: 42,
-      sugar_g: 8,
-    };
-    setFoodForm({ ...foodForm, ...estimate });
-    return estimate;
+    setSaveMessage("Memory saved. It's on Home under Today's snaps.");
   }
 
   function selectCaptureMode(mode) {
     setCaptureMode(mode);
-    if (mode === "food" && !foodForm.name) {
-      setFoodForm({
-        ...foodForm,
-        name: "Grilled chicken rice bowl",
-        calories: 560,
-        protein_g: 42,
-        sugar_g: 8,
-      });
-    }
   }
 
   function saveFoodMeal() {
     if (!preview) return;
-    const estimate = foodForm.name
-      ? foodForm
-      : { ...foodForm, name: "Grilled chicken rice bowl", calories: 560, protein_g: 42, sugar_g: 8 };
+    if (!foodForm.name.trim()) {
+      setCaptureError("Add the food name before saving the meal.");
+      return;
+    }
+    setCaptureError("");
+    const now = new Date();
     const nextMeal = {
-      type: "food",
+      id: createId(),
+      date: todayISO,
+      type: foodForm.meal_type,
+      source: "snap",
       image_url: preview,
       photo_url: preview,
-      meal_type: estimate.meal_type,
-      name: estimate.name,
-      calories: Number(estimate.calories || 0),
-      protein_g: Number(estimate.protein_g || 0),
-      sugar_g: Number(estimate.sugar_g || 0),
-      cost: Number(estimate.cost || 0),
-      rating: Number(estimate.rating || 1),
-      notes: estimate.notes,
-      time: new Date().toTimeString().slice(0, 5),
+      meal_type: foodForm.meal_type,
+      name: foodForm.name.trim(),
+      calories: Number(foodForm.calories || 0),
+      protein_g: Number(foodForm.protein_g || 0),
+      sugar_g: Number(foodForm.sugar_g || 0),
+      cost: Number(foodForm.cost || 0),
+      rating: Number(foodForm.rating || 0),
+      notes: foodForm.notes,
+      time: now.toTimeString().slice(0, 5),
+      createdAt: now.toISOString(),
     };
-    const history = JSON.parse(localStorage.getItem("dayflow_meal_history") || "[]");
+    const history = readLocalJSON("dayflow_meal_history", []);
 
-    setLog({ ...log, meals: [...log.meals, nextMeal] });
-    localStorage.setItem("dayflow_meal_history", JSON.stringify([...history, { ...nextMeal, createdAt: new Date().toISOString() }]));
+    setLog((current) => ({ ...current, meals: [...(current.meals || []), nextMeal] }));
+    // Meal history keeps the nutrition data for recommendations; the photo
+    // itself is stored once (in today's log) to save space.
+    writeLocalJSON("dayflow_meal_history", [...history, { ...nextMeal, image_url: "", photo_url: "" }]);
     clearCapture();
+    setSaveMessage(`Meal saved: ${nextMeal.name}.`);
   }
 
   function saveSpending() {
-    if (!preview || !spendingForm.item_name.trim() || !spendingForm.amount) return;
+    if (!preview) return;
+    if (!spendingForm.item_name.trim() || !spendingForm.amount) {
+      setCaptureError("Add what you bought and the amount before saving.");
+      return;
+    }
+    setCaptureError("");
     const nextSpending = {
-      id: crypto.randomUUID(),
+      id: createId(),
       date: todayISO,
       image_url: preview,
       item_name: spendingForm.item_name,
@@ -2275,20 +2599,28 @@ function Snaps({ log, setLog }) {
       createdAt: new Date().toISOString(),
     };
 
-    setSpendingRecords([...spendingRecords, nextSpending]);
-    setSpendingSavedMessage(`Saved. You spent $${nextSpending.amount.toFixed(2)} on ${nextSpending.item_name}.`);
+    setSpendingRecords((current) => [...current, nextSpending]);
+    // Clear the review like Save Memory / Save meal do; previously the form
+    // stayed open and a second tap saved a duplicate record.
+    clearCapture();
+    setSaveMessage(`Saved. You spent $${nextSpending.amount.toFixed(2)} on ${nextSpending.item_name}.`);
   }
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className="-mx-4 -mt-2 min-h-[calc(100vh-8.5rem)] bg-zinc-950 px-4 pb-6 pt-4 text-white"
+      className={classNames(
+        "-mx-4 -mt-2 bg-zinc-950 px-4 pb-4 pt-3 text-white",
+        preview ? "min-h-[calc(100dvh-11rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]" : "h-[calc(100dvh-11rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] overflow-hidden"
+      )}
     >
-      <div className="mx-auto flex min-h-[calc(100vh-10rem)] max-w-md flex-col justify-between">
+      <input ref={cameraInputRef} type="file" accept="image/*" capture={cameraFacing === "front" ? "user" : "environment"} className="hidden" onChange={handleFileUpload} />
+      <input ref={galleryInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+      <div className={classNames("mx-auto flex max-w-md flex-col", preview ? "" : "h-full")}>
         <div className="flex items-center justify-between">
           <div className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold backdrop-blur-xl">
-            🔥 {todaySnaps.length} snaps today
+            🔥 {memoryStreak > 1 ? `${memoryStreak}-day streak · ` : ""}{todaySnaps.length} today
           </div>
           <button
             onClick={() => setCameraFacing(cameraFacing === "rear" ? "front" : "rear")}
@@ -2298,10 +2630,13 @@ function Snaps({ log, setLog }) {
           </button>
         </div>
 
-        <div className="relative my-5 overflow-hidden rounded-[2rem] bg-black shadow-2xl ring-1 ring-white/10">
-          <div className="aspect-[9/14] w-full">
+        <div className={classNames(
+          "relative my-3 overflow-hidden rounded-[2rem] bg-black shadow-2xl ring-1 ring-white/10",
+          preview ? "" : "min-h-0 flex-1"
+        )}>
+          <div className={classNames("w-full", preview ? "h-[38dvh]" : "h-full")}>
             {preview ? (
-              <img src={preview} alt="Snap preview" className="h-full w-full object-cover" />
+              <img src={preview} alt="Snap preview" className="h-full w-full object-contain" />
             ) : (
               <div className="flex h-full flex-col items-center justify-center bg-gradient-to-b from-zinc-900 via-zinc-950 to-black px-8 text-center">
                 <div className="mb-4 rounded-full bg-white/10 p-5">
@@ -2309,8 +2644,10 @@ function Snaps({ log, setLog }) {
                 </div>
                 <p className="text-lg font-bold">Ready for a snap</p>
                 <p className="mt-2 text-sm text-zinc-400">
-                  Capture a moment or upload from your gallery.
+                  {capturing ? "Opening camera..." : "Tap the shutter to take a photo, or pick one from your gallery."}
                 </p>
+                {saveMessage && <p className="mt-4 rounded-2xl bg-white/10 px-4 py-2 text-sm font-semibold text-white">{saveMessage}</p>}
+                {captureError && <p className="mt-4 rounded-2xl bg-rose-500/20 px-4 py-2 text-sm font-semibold text-rose-100">{captureError}</p>}
               </div>
             )}
           </div>
@@ -2320,7 +2657,8 @@ function Snaps({ log, setLog }) {
         </div>
 
         {preview ? (
-          <div className="space-y-3 rounded-[2rem] bg-white p-4 text-zinc-900 shadow-2xl dark:bg-zinc-900 dark:text-white">
+          <div ref={reviewRef} className="space-y-3 rounded-[2rem] bg-white p-4 text-zinc-900 shadow-2xl dark:bg-zinc-900 dark:text-white">
+            {captureError && <p className="rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-600 dark:bg-rose-950/40 dark:text-rose-200">{captureError}</p>}
             <div className="grid grid-cols-3 gap-2">
               {[
                 { id: "memory", label: "Save Memory", color: "bg-[hsl(24_80%_58%)]" },
@@ -2362,16 +2700,17 @@ function Snaps({ log, setLog }) {
                   {["breakfast", "lunch", "dinner", "snack"].map((type) => <option key={type} value={type}>{type}</option>)}
                 </select>
 
-                {foodForm.name && (
-                  <div className="rounded-3xl bg-[hsl(160_50%_45%)]/10 p-3 text-sm text-zinc-700 dark:text-zinc-200">
-                    <p className="font-bold text-[hsl(160_50%_45%)]">AI Estimate Food: {foodForm.name}</p>
-                    <p>Calories: {foodForm.calories}</p>
-                    <p>Protein: {foodForm.protein_g}g</p>
-                    <p>Sugar: {foodForm.sugar_g}g</p>
-                  </div>
-                )}
+                <p className="rounded-3xl bg-[hsl(160_50%_45%)]/10 p-3 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+                  AI photo recognition isn't connected yet, so enter the food and your best estimate. Values are approximate.
+                </p>
+                <input className="field" placeholder="Food name" value={foodForm.name} onChange={(e) => setFoodForm({ ...foodForm, name: e.target.value })} />
+                <div className="grid grid-cols-3 gap-2">
+                  <input className="field" placeholder="Calories" type="number" inputMode="numeric" value={foodForm.calories} onChange={(e) => setFoodForm({ ...foodForm, calories: e.target.value })} />
+                  <input className="field" placeholder="Protein g" type="number" inputMode="decimal" value={foodForm.protein_g} onChange={(e) => setFoodForm({ ...foodForm, protein_g: e.target.value })} />
+                  <input className="field" placeholder="Sugar g" type="number" inputMode="decimal" value={foodForm.sugar_g} onChange={(e) => setFoodForm({ ...foodForm, sugar_g: e.target.value })} />
+                </div>
 
-                <input className="field" placeholder="Cost" type="number" value={foodForm.cost} onChange={(e) => setFoodForm({ ...foodForm, cost: e.target.value })} />
+                <input className="field" placeholder="Cost" type="number" inputMode="decimal" value={foodForm.cost} onChange={(e) => setFoodForm({ ...foodForm, cost: e.target.value })} />
 
                 <div className="rounded-3xl bg-zinc-100 p-4 dark:bg-zinc-800">
                   <p className="mb-2 text-sm font-bold text-zinc-500">Rate this meal</p>
@@ -2393,10 +2732,7 @@ function Snaps({ log, setLog }) {
                 </div>
 
                 <textarea className="min-h-20 w-full rounded-2xl bg-zinc-100 px-4 py-3 outline-none dark:bg-zinc-800" placeholder="Notes" value={foodForm.notes} onChange={(e) => setFoodForm({ ...foodForm, notes: e.target.value })} />
-                <div className="grid grid-cols-2 gap-2">
-                  <Button variant="secondary" onClick={estimateFoodFromPhoto} className="rounded-2xl py-3">Estimate calories</Button>
-                  <Button onClick={saveFoodMeal} className="rounded-2xl bg-[hsl(24_80%_58%)] py-3 text-white">Save meal</Button>
-                </div>
+                <Button onClick={saveFoodMeal} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-3 text-white">Save meal</Button>
               </div>
             )}
 
@@ -2404,7 +2740,7 @@ function Snaps({ log, setLog }) {
               <div className="space-y-2">
                 <input className="field" placeholder="Item / what I bought" value={spendingForm.item_name} onChange={(e) => setSpendingForm({ ...spendingForm, item_name: e.target.value })} />
                 <div className="grid grid-cols-2 gap-2">
-                  <input className="field" placeholder="Amount spent" type="number" value={spendingForm.amount} onChange={(e) => setSpendingForm({ ...spendingForm, amount: e.target.value })} />
+                  <input className="field" placeholder="Amount spent" type="number" inputMode="decimal" value={spendingForm.amount} onChange={(e) => setSpendingForm({ ...spendingForm, amount: e.target.value })} />
                   <select className="field" value={spendingForm.category} onChange={(e) => setSpendingForm({ ...spendingForm, category: e.target.value })}>
                     {["Food", "Groceries", "Transport", "Shopping", "Health", "Fun"].map((category) => <option key={category}>{category}</option>)}
                   </select>
@@ -2424,16 +2760,21 @@ function Snaps({ log, setLog }) {
             </button>
           </div>
         ) : (
-          <div className="relative flex items-center justify-center pb-2">
-            <label className="absolute left-2 flex h-14 w-14 cursor-pointer items-center justify-center rounded-2xl bg-white/10 backdrop-blur-xl transition hover:bg-white/20">
+          <div className="relative flex shrink-0 items-center justify-center pb-1">
+            <button
+              onClick={() => runCapture("gallery")}
+              disabled={capturing}
+              className="absolute left-2 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-xl transition hover:bg-white/20 disabled:opacity-50"
+              aria-label="Choose from gallery"
+            >
               <ImagePlus className="h-6 w-6" />
-              <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
-            </label>
+            </button>
 
             <button
-              onClick={captureSnap}
-              className="h-20 w-20 rounded-full border-4 border-white bg-white shadow-[0_0_0_8px_rgba(255,255,255,0.16)] transition active:scale-95"
-              aria-label="Capture snap"
+              onClick={() => runCapture("camera")}
+              disabled={capturing}
+              className="h-20 w-20 rounded-full border-4 border-white bg-white shadow-[0_0_0_8px_rgba(255,255,255,0.16)] transition active:scale-95 disabled:opacity-60"
+              aria-label="Take photo"
             />
 
             <button
@@ -2506,7 +2847,8 @@ function toISODate(date) {
 }
 
 function daysBetween(startISO, endISO) {
-  return Math.floor((toLocalDate(endISO) - toLocalDate(startISO)) / 86400000);
+  // Math.round, not floor: a day containing a DST change is 23 or 25 hours long.
+  return Math.round((toLocalDate(endISO) - toLocalDate(startISO)) / 86400000);
 }
 
 function getCyclePhase(cycleStart, dateISO) {
@@ -2526,28 +2868,6 @@ function formatCycleDateTitle(dateISO) {
   const date = toLocalDate(dateISO);
   const formatted = date.toLocaleDateString("en-US", { month: "long", day: "numeric" });
   return dateISO === todayISO ? `Today, ${formatted}` : formatted;
-}
-
-function buildMockPeriodLogs() {
-  const cycleStart = toLocalDate(todayISO);
-  const moods = ["happy", "neutral", "tired", "stressed", "amazing"];
-  const symptoms = ["cramps", "bloating", "headache", "fatigue", "cravings"];
-
-  return Array.from({ length: 48 }, (_, index) => {
-    const date = new Date(cycleStart);
-    date.setDate(cycleStart.getDate() - index * 4);
-    const dateISO = toISODate(date);
-    const { phase } = getCyclePhase(toISODate(new Date(cycleStart.getFullYear(), cycleStart.getMonth() - 5, 1)), dateISO);
-
-    return {
-      date: dateISO,
-      phase,
-      flow: phase === "period" ? ["light", "medium", "heavy"][index % 3] : "none",
-      moods: [moods[index % moods.length]],
-      symptoms: [symptoms[index % symptoms.length], symptoms[(index + 2) % symptoms.length]].slice(0, phase === "ovulation" ? 1 : 2),
-      notes: "",
-    };
-  });
 }
 
 function Health({ log }) {
@@ -2581,9 +2901,10 @@ function Health({ log }) {
 }
 
 function CycleTracker() {
+  const [hasSavedCycleStart] = useState(() => Boolean(localStorage.getItem("dayflow_cycle_start")));
   const [cycleStart, setCycleStart] = useState(() => localStorage.getItem("dayflow_cycle_start") || todayISO);
-  const [periodLogs, setPeriodLogs] = useState(() => JSON.parse(localStorage.getItem("dayflow_period_logs") || "{}"));
-  const [intimacyLogs, setIntimacyLogs] = useState(() => JSON.parse(localStorage.getItem("dayflow_intimacy_logs") || "[]"));
+  const [periodLogs, setPeriodLogs] = useState(() => readLocalJSON("dayflow_period_logs", {}));
+  const [intimacyLogs, setIntimacyLogs] = useState(() => readLocalJSON("dayflow_intimacy_logs", []));
   const [selectedDate, setSelectedDate] = useState(todayISO);
   const [visibleMonth, setVisibleMonth] = useState(() => {
     const date = toLocalDate(todayISO);
@@ -2640,7 +2961,7 @@ function CycleTracker() {
     };
 
     localStorage.setItem("dayflow_cycle_start", cycleStart);
-    localStorage.setItem("dayflow_period_logs", JSON.stringify(nextLogs));
+    writeLocalJSON("dayflow_period_logs", nextLogs);
     setPeriodLogs(nextLogs);
     setSavedMessage(`Saved ${selectedDate}`);
   }
@@ -2662,13 +2983,30 @@ function CycleTracker() {
     };
 
     localStorage.setItem("dayflow_cycle_start", cycleStart);
-    localStorage.setItem("dayflow_period_logs", JSON.stringify(nextLogs));
+    writeLocalJSON("dayflow_period_logs", nextLogs);
     setDailyLog(logForDate);
     setPeriodLogs(nextLogs);
     setSavedMessage(`Marked ${selectedDate} as a period day`);
   }
 
   function markAsPeriod() {
+    if (isMarkedPeriod) {
+      // Previously there was no way to undo "Mark as Period".
+      const unmarked = { ...dailyLog, flow: "none", phase: undefined };
+      const hasOtherData = unmarked.symptoms?.length || unmarked.factors?.length || unmarked.spotting || unmarked.notes || unmarked.moods?.length;
+      const nextLogs = { ...periodLogs };
+      if (hasOtherData) {
+        nextLogs[selectedDate] = { ...unmarked, date: selectedDate };
+        delete nextLogs[selectedDate].phase;
+      } else {
+        delete nextLogs[selectedDate];
+      }
+      writeLocalJSON("dayflow_period_logs", nextLogs);
+      setPeriodLogs(nextLogs);
+      setDailyLog({ ...blankCycleLog(), ...(nextLogs[selectedDate] || {}) });
+      setSavedMessage(`Removed period mark for ${selectedDate}`);
+      return;
+    }
     savePeriodLog({ ...dailyLog, flow: "medium", phase: "period" });
   }
 
@@ -2678,14 +3016,14 @@ function CycleTracker() {
       : [
           ...intimacyLogs,
           {
-            id: crypto.randomUUID(),
+            id: createId(),
             date: selectedDate,
             loggedAt: new Date().toISOString(),
             type: "intimacy",
           },
         ];
 
-    localStorage.setItem("dayflow_intimacy_logs", JSON.stringify(nextLogs));
+    writeLocalJSON("dayflow_intimacy_logs", nextLogs);
     setIntimacyLogs(nextLogs);
   }
 
@@ -2703,12 +3041,18 @@ function CycleTracker() {
         <div className="mb-5">
           <p className="text-3xl font-black tracking-tight">{selectedDateTitle}</p>
           <p className="mt-1 text-sm font-semibold capitalize text-zinc-500">
-            Cycle Day {selectedPhase.day} · {selectedPhase.phase}
+            Cycle Day {selectedPhase.day} · {selectedPhase.phase}{periodLogs[selectedDate]?.phase === "period" ? "" : " (estimate)"}
           </p>
+          {!hasSavedCycleStart && (
+            <p className="mt-2 rounded-2xl bg-zinc-100 p-3 text-xs text-zinc-500 dark:bg-zinc-800">
+              Set your cycle start date below for better estimates. Estimates use a simple 28-day model and are not medical predictions.
+            </p>
+          )}
         </div>
 
         <button
           onClick={markAsPeriod}
+          aria-pressed={isMarkedPeriod}
           className={classNames(
             "mb-3 w-full rounded-full px-5 py-4 text-base font-bold shadow-sm transition",
             isMarkedPeriod
@@ -2885,6 +3229,7 @@ function CycleLogRow({ label, value, accent, onAdd, marked = false }) {
       </div>
       <button
         onClick={onAdd}
+        aria-label={marked ? `${label}: logged` : `Add ${label.toLowerCase()}`}
         className={classNames(
           "flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 transition dark:bg-zinc-800",
           marked ? "bg-purple-500 text-white" : accent
@@ -2898,8 +3243,7 @@ function CycleLogRow({ label, value, accent, onAdd, marked = false }) {
 
 function WellnessInsights({ log }) {
   const insights = useMemo(() => {
-    const savedLogs = Object.values(JSON.parse(localStorage.getItem("dayflow_period_logs") || "{}"));
-    const mockLogs = buildMockPeriodLogs();
+    const savedLogs = Object.values(readLocalJSON("dayflow_period_logs", {}));
     const currentMood = moodOptions.find((mood) => mood.id === log.mood) || moodOptions[2];
     const currentPhase = getCyclePhase(localStorage.getItem("dayflow_cycle_start") || todayISO, todayISO);
     const dailyLog = {
@@ -2911,7 +3255,9 @@ function WellnessInsights({ log }) {
     };
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-    const logs = [...mockLogs, ...savedLogs, dailyLog].filter((item) => toLocalDate(item.date) >= sixMonthsAgo);
+    // Earlier builds mixed 48 generated sample logs into these stats, so the
+    // insights did not reflect the user's real data. Only real logs are used now.
+    const logs = [...savedLogs, ...(log.mood ? [dailyLog] : [])].filter((item) => item.date && toLocalDate(item.date) >= sixMonthsAgo);
     const phases = ["period", "follicular", "ovulation", "luteal"];
     const moodLookup = Object.fromEntries(moodOptions.map((mood) => [mood.id, mood.score]));
 
@@ -2938,9 +3284,21 @@ function WellnessInsights({ log }) {
 
     return {
       phaseStats,
+      totalLogs: logs.length,
       topSymptoms: Object.entries(topSymptoms).sort((a, b) => b[1] - a[1]).slice(0, 5),
     };
   }, [log]);
+
+  if (insights.totalLogs === 0) {
+    return (
+      <SoftCard>
+        <SectionTitle icon={Smile} title="Wellness insights" />
+        <p className="text-sm text-zinc-500">
+          No cycle or mood logs yet. Log a few days in Cycle (and your mood on Home) and your trends will show here.
+        </p>
+      </SoftCard>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -3038,7 +3396,7 @@ const planInspirationIdeas = [
 
 function createBlankChoiceBlock(question = "") {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     question,
     choices: ["", "", ""],
     partnerChoice: null,
@@ -3048,14 +3406,14 @@ function createBlankChoiceBlock(question = "") {
 function normalizePlan(plan) {
   const now = new Date().toISOString();
   const choiceBlocks = (plan.choiceBlocks || []).map((block) => ({
-    id: block.id || crypto.randomUUID(),
+    id: block.id || createId(),
     question: block.question || "",
     choices: block.choices || (block.options || []).map((option) => option.text || "").concat(["", "", ""]).slice(0, 3),
     partnerChoice: block.partnerChoice ?? null,
   }));
 
   return {
-    id: plan.id || crypto.randomUUID(),
+    id: plan.id || createId(),
     title: plan.title || "Untitled plan",
     content: plan.content || "",
     date: plan.date || todayISO,
@@ -3070,8 +3428,8 @@ function normalizePlan(plan) {
 
 function Entertainment({ log, setLog }) {
   const [plans, setPlans] = useState(() => {
-    const savedPlans = localStorage.getItem("dayflow_fun_plans");
-    const parsedPlans = savedPlans ? JSON.parse(savedPlans) : [];
+    const savedPlans = readLocalJSON("dayflow_fun_plans", []);
+    const parsedPlans = Array.isArray(savedPlans) ? savedPlans : [];
     return parsedPlans.map(normalizePlan).filter((plan) => plan.status !== "draft");
   });
 
@@ -3092,7 +3450,8 @@ function Entertainment({ log, setLog }) {
     { label: "Shows", icon: "📺" },
     { label: "Music", icon: "🎵" },
   ];
-  const memorySnaps = log.snaps.filter((snap) => !snap.type || snap.type === "memory");
+  // Includes memories from earlier days (archived in dayflow_daily_logs).
+  const memorySnaps = useMemo(() => getAllMemorySnaps(log), [log]);
   const partnerUpdates = [
     { type: "wake", text: `Wake-up time logged at ${log.wake_up_time || "7:30"} ☀️` },
     { type: "meal", text: log.meals[0]?.name ? `Logged ${log.meals[0].name} for ${log.meals[0].type || "a meal"} 🍜` : "Logged ramen for lunch 🍜" },
@@ -3105,7 +3464,7 @@ function Entertainment({ log, setLog }) {
   const finalizedPlans = plans.filter((plan) => plan.status === "finalized");
 
   useEffect(() => {
-    localStorage.setItem("dayflow_fun_plans", JSON.stringify(plans));
+    writeLocalJSON("dayflow_fun_plans", plans);
   }, [plans]);
 
   function resetPlanForm() {
@@ -3194,7 +3553,7 @@ function Entertainment({ log, setLog }) {
     setPlans([
       ...plans,
       {
-        id: crypto.randomUUID(),
+        id: createId(),
         title: planForm.title.trim(),
         content: planForm.content,
         date: planForm.date,
@@ -3223,6 +3582,13 @@ function Entertainment({ log, setLog }) {
   }
 
   function confirmPartnerChoices(planId) {
+    const target = plans.find((plan) => plan.id === planId);
+    const unanswered = (target?.choiceBlocks || []).filter((block) => block.partnerChoice === null || !block.choices[block.partnerChoice]);
+    if (unanswered.length) {
+      setPlanError(`Pick an option for every question first (${unanswered.length} left).`);
+      return;
+    }
+    setPlanError("");
     const now = new Date().toISOString();
     setPlans(plans.map((plan) => {
       if (plan.id !== planId) return plan;
@@ -3259,12 +3625,15 @@ function Entertainment({ log, setLog }) {
             <p id="tbmjlwm" className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">
               Connect with your partner to share updates, plans, and memories.
             </p>
+            <p className="mt-2 text-xs text-zinc-500">
+              Real two-phone pairing needs the cloud backend (not built yet). The button below opens a local demo preview only.
+            </p>
             <Button
               id="0frvww"
               onClick={() => setConnectedPartner({ id: "mock-partner", name: "Emily" })}
               className="mt-3 rounded-2xl bg-[hsl(24_80%_58%)] text-white"
             >
-              Invite Partner
+              Preview with demo partner
             </Button>
           </div>
         )}
@@ -3295,7 +3664,7 @@ function Entertainment({ log, setLog }) {
             <div className="rounded-3xl bg-[hsl(30_30%_98%)] p-4 dark:bg-zinc-800">
               <p className="font-bold">Shared daily feed</p>
               <p className="mt-1 text-sm text-zinc-500">
-                Future shared data will include moods, meals, workouts, snaps, notes, wake-up times, plans, and memories.
+                Demo preview: these cards are sample updates built from your own log on this phone, not your partner's real activity. Partner sync is planned.
               </p>
             </div>
             {partnerUpdates.map((update) => (
@@ -3312,10 +3681,10 @@ function Entertainment({ log, setLog }) {
             <div className="rounded-3xl bg-[hsl(30_30%_98%)] p-4 dark:bg-zinc-800">
               <div className="mb-3">
                 <p className="font-bold">AI date inspiration</p>
-                <p className="text-sm text-zinc-500">Start from trend-aware date ideas, then make it yours.</p>
+                <p className="text-sm text-zinc-500">Start from a few built-in date ideas, then make it yours.</p>
               </div>
               <Button onClick={suggestPlanIdeas} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-3 text-white">
-                Suggest from latest trends
+                Suggest date ideas
               </Button>
               {aiPlanIdeas.length > 0 && (
                 <div className="mt-3 grid gap-2">
@@ -3383,7 +3752,7 @@ function Entertainment({ log, setLog }) {
                         value={block.question}
                         onChange={(e) => updateChoiceBlock(block.id, { question: e.target.value })}
                       />
-                      <Button variant="secondary" size="icon" onClick={() => removeChoiceBlock(block.id)}>
+                      <Button variant="secondary" size="icon" aria-label="Remove question" onClick={() => removeChoiceBlock(block.id)}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
@@ -3445,7 +3814,7 @@ function Entertainment({ log, setLog }) {
                             <div key={block.id} className="rounded-2xl bg-white p-3 dark:bg-zinc-900">
                               <p className="text-sm font-bold">{block.question || "Choice"}</p>
                               <div className="mt-2 grid gap-2">
-                                {block.choices.filter(Boolean).map((choice, index) => (
+                                {block.choices.map((choice, index) => (choice ? (
                                   <button
                                     key={`${choice}-${index}`}
                                     onClick={() => plan.status === "sent_to_partner" ? choosePartnerOption(plan.id, block.id, index) : null}
@@ -3459,7 +3828,7 @@ function Entertainment({ log, setLog }) {
                                     {["A", "B", "C"][index]}. {choice}
                                     {block.partnerChoice === index && " · Partner selected"}
                                   </button>
-                                ))}
+                                ) : null))}
                               </div>
                             </div>
                           ))}
@@ -3499,11 +3868,11 @@ function Entertainment({ log, setLog }) {
               </div>
             ) : (
               memorySnaps.map((snap, index) => (
-                <div key={`${snap.url}-${index}`} className="overflow-hidden rounded-3xl bg-zinc-100 shadow-sm dark:bg-zinc-800">
-                  <img src={snap.url} className="h-48 w-full object-cover" alt={snap.caption || "Memory"} />
+                <div key={`${snap.id || snap.taken_at || "snap"}-${index}`} className="overflow-hidden rounded-3xl bg-zinc-100 shadow-sm dark:bg-zinc-800">
+                  <img src={snap.url} loading="lazy" decoding="async" className="h-48 w-full object-cover" alt={snap.caption || "Memory"} />
 
                   <div className="p-3 text-sm">
-                    <p className="font-semibold">{snap.caption || "A Dayflow moment"}</p>
+                    <p className="font-semibold">{snap.caption || "An Xlife moment"}</p>
                     <p className="mt-1 text-xs text-zinc-500">
                       {snap.taken_at ? new Date(snap.taken_at).toLocaleString() : "Saved memory"}
                     </p>
@@ -3521,6 +3890,7 @@ function Entertainment({ log, setLog }) {
         <div className="mb-5">
           <p className="text-3xl font-bold tracking-tight">Entertainment</p>
           <p className="mt-1 text-sm text-zinc-500">Discover what&apos;s trending</p>
+          <p className="mt-1 text-xs text-zinc-400">Sample headlines for now, not live news.</p>
         </div>
 
         <div className="mb-4 flex justify-center">
@@ -3566,7 +3936,7 @@ function Entertainment({ log, setLog }) {
 
 export default function App() {
   const [user, setUser] = useState(() => {
-    const savedUser = JSON.parse(localStorage.getItem("dayflow_user") || "null");
+    const savedUser = readLocalJSON("dayflow_user", null);
     const activeSession = localStorage.getItem("dayflow_active_session");
 
     if (savedUser && activeSession !== "false") {
@@ -3581,6 +3951,7 @@ export default function App() {
   }
 
   function handleLogout() {
+    if (!window.confirm("Log out of Xlife? Your data stays on this phone.")) return;
     // Future Supabase Auth: replace this with supabase.auth.signOut().
     localStorage.setItem("dayflow_active_session", "false");
     setUser(null);

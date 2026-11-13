@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { createId, localDateISO } from "./storage";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -58,9 +59,9 @@ export async function loadDailyLogFromCloud(userId, date) {
 export async function saveMealToCloud(userId, meal) {
   // Future table: meals { id, user_id, date, meal_type, name, nutrition, notes }
   return cloudUpsert("meals", {
-    id: meal.id || crypto.randomUUID(),
+    id: meal.id || createId(),
     user_id: userId,
-    date: meal.date || new Date().toISOString().slice(0, 10),
+    date: meal.date || localDateISO(),
     meal_type: meal.meal_type || meal.type,
     name: meal.name,
     meal,
@@ -87,9 +88,9 @@ export async function savePeriodLogToCloud(userId, periodLog) {
 export async function saveWorkoutToCloud(userId, workout) {
   // Future table: workouts { id, user_id, date, type, exercises, summary }
   return cloudUpsert("workouts", {
-    id: workout.id || crypto.randomUUID(),
+    id: workout.id || createId(),
     user_id: userId,
-    date: workout.date || new Date().toISOString().slice(0, 10),
+    date: workout.date || localDateISO(),
     workout,
     updated_at: new Date().toISOString(),
   });
@@ -98,7 +99,7 @@ export async function saveWorkoutToCloud(userId, workout) {
 export async function savePlanToCloud(userId, plan) {
   // Future table: plans { id, user_id, status, title, date, choice_blocks, final_plan }
   return cloudUpsert("plans", {
-    id: plan.id || crypto.randomUUID(),
+    id: plan.id || createId(),
     user_id: userId,
     status: plan.status,
     title: plan.title,
@@ -111,7 +112,7 @@ export async function savePlanToCloud(userId, plan) {
 export async function saveRestaurantToCloud(userId, restaurant) {
   // Future table: restaurants { id, user_id, name, cuisine, location, menu_items }
   return cloudUpsert("restaurants", {
-    id: restaurant.id || crypto.randomUUID(),
+    id: restaurant.id || createId(),
     user_id: userId,
     name: restaurant.name,
     cuisine: restaurant.cuisine,
