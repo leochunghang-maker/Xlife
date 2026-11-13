@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Utensils, Sparkles, Trash2, Plus, ImagePlus, Star } from "lucide-react";
+import { Utensils, Sparkles, Trash2, Plus, ImagePlus, Star, ScanBarcode } from "lucide-react";
 import { readLocalJSON, writeLocalJSON, createId } from "../lib/storage";
 import { fileToPersistentDataUrl } from "../lib/photos";
 import { Button, SoftCard, SectionTitle } from "../components/ui.jsx";
@@ -9,6 +9,7 @@ import { mealSuggestions, loadRestaurantCatalog, createRestaurantRecord, cuisine
 import { classNames } from "../lib/utils";
 import { StoredImage } from "../components/StoredImage.jsx";
 import { useDirtyForm } from "../lib/dirtyForms";
+import { QuickAdd, BarcodeLookup, AiEstimate } from "./MealTools.jsx";
 
 export function Meals({ log, setLog }) {
   const [form, setForm] = useState({ type: "breakfast", name: "", calories: "", protein_g: "", sugar_g: "", rating: 5, cost: "" });
@@ -125,6 +126,19 @@ export function Meals({ log, setLog }) {
     setMealHistory((current) => [...current, { ...nextMeal, photo_url: "" }]);
     setMealMessage(`Added ${nextMeal.name} to today's ${nextMeal.type}.`);
     return nextMeal;
+  }
+
+  // Fills the "Log a meal" form for review (barcode / AI estimates).
+  function fillForm(fields) {
+    setForm((current) => ({
+      ...current,
+      name: fields.name ?? current.name,
+      calories: fields.calories === "" || fields.calories === undefined ? current.calories : String(fields.calories),
+      protein_g: fields.protein_g === "" || fields.protein_g === undefined ? current.protein_g : String(fields.protein_g),
+      sugar_g: fields.sugar_g === "" || fields.sugar_g === undefined ? current.sugar_g : String(fields.sugar_g),
+    }));
+    setMealMessage("Values filled in above — check them, then tap Add.");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function addMeal() {
@@ -313,6 +327,7 @@ export function Meals({ log, setLog }) {
       <div className="grid grid-cols-3 gap-2"><input className="field" placeholder="Calories" type="number" value={form.calories} onChange={(e) => setForm({ ...form, calories: e.target.value })} /><input className="field" placeholder="Protein g" type="number" value={form.protein_g} onChange={(e) => setForm({ ...form, protein_g: e.target.value })} /><input className="field" placeholder="Sugar g" type="number" value={form.sugar_g} onChange={(e) => setForm({ ...form, sugar_g: e.target.value })} /></div>
       <div className="grid grid-cols-2 gap-2"><input className="field" placeholder="Cost" type="number" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} /><select className="field" value={form.rating} onChange={(e) => setForm({ ...form, rating: Number(e.target.value) })}>{[1,2,3,4,5].map(n => <option key={n} value={n}>{n} stars</option>)}</select></div>
       <div className="flex gap-2 mt-2"><Button onClick={addMeal} className="flex-1 rounded-2xl bg-[hsl(24_80%_58%)]"><Plus className="h-4 w-4 mr-1" /> Add</Button><Button variant="secondary" className="rounded-2xl" onClick={() => setSuggestions(smartFoodSuggestions.length ? smartFoodSuggestions.slice(0, 4) : mealSuggestions[form.type].map((item) => ({ ...item, key: suggestionKey(item.name), reason: "Starter idea until Xlife learns more from your meals." })))}>Ideas</Button></div>
+      <QuickAdd mealHistory={mealHistory} onLog={(meal) => logMeal({ ...meal, type: form.type, photo_url: "" })} />
       {suggestions.length > 0 && <div className="mt-3 grid gap-2">{suggestions.map((s) => <button key={s.key || s.name} onClick={() => pickSuggestion(s)} className="text-left bg-zinc-100 dark:bg-zinc-800 rounded-2xl p-3 text-sm"><b>{s.name}</b><p className="text-zinc-500">{s.calories} kcal · {s.protein_g}g protein · {s.reason}</p></button>)}</div>}
     </SoftCard>
 
@@ -547,14 +562,20 @@ export function Meals({ log, setLog }) {
     </SoftCard>
 
     <SoftCard>
-      <SectionTitle icon={ImagePlus} title="Photo calorie scanner" />
+      <SectionTitle icon={ScanBarcode} title="Packaged food (barcode)" />
+      <BarcodeLookup onFill={fillForm} />
+    </SoftCard>
+
+    <SoftCard>
+      <SectionTitle icon={ImagePlus} title="Food photo" />
       <label className="block rounded-2xl border-2 border-dashed border-zinc-200 p-6 text-center text-sm font-semibold text-zinc-500 dark:border-zinc-700">
-        Upload food photo — AI estimate will connect later
+        Attach a food photo to your next meal
         <input type="file" accept="image/*" className="hidden" onChange={handleFoodPhotoUpload} />
       </label>
       {foodPhotoPreview && (
         <StoredImage src={foodPhotoPreview} alt="" className="mt-3 h-40 w-full rounded-3xl object-cover" />
       )}
+      <AiEstimate photoRef={foodPhotoPreview} onFill={fillForm} />
     </SoftCard>
 
     <SoftCard>
