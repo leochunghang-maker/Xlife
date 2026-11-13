@@ -7,6 +7,7 @@ import { Button, SoftCard, SectionTitle } from "../components/ui.jsx";
 import { todayISO } from "../lib/dates";
 import { mealSuggestions, loadRestaurantCatalog, createRestaurantRecord, cuisineCategories, suggestionKey, getMealTypeForNow, getCuisineFallbackRestaurant, getSmartFoodSuggestions } from "../lib/food";
 import { classNames } from "../lib/utils";
+import { NearbyFinder } from "./NearbyFinder.jsx";
 import { StoredImage } from "../components/StoredImage.jsx";
 import { useDirtyForm } from "../lib/dirtyForms";
 import { QuickAdd, BarcodeLookup, AiEstimate } from "./MealTools.jsx";
@@ -358,7 +359,7 @@ export function Meals({ log, setLog }) {
         <div className="space-y-4">
           <div className="rounded-3xl bg-[hsl(30_30%_98%)] p-4 dark:bg-zinc-800">
             <p className="font-bold">Search your restaurants</p>
-            <p className="mt-1 text-xs text-zinc-500">Searches restaurants you have saved on this phone. Live nearby search is not connected yet.</p>
+            <p className="mt-1 text-xs text-zinc-500">Searches restaurants you have saved on this phone. For places near you, use "Find nearby restaurants" below.</p>
             <input
               className="field mt-3"
               placeholder="Location, restaurant, or menu item"
@@ -383,6 +384,7 @@ export function Meals({ log, setLog }) {
                 </button>
               ))}
             </div>
+            <NearbyFinder cuisine={selectedCuisine} />
           </div>
 
           <div className="rounded-3xl bg-white p-4 shadow-sm dark:bg-zinc-900">
