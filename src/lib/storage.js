@@ -71,3 +71,17 @@ export function recordLocalDate(item) {
   const parsed = new Date(timestamp);
   return Number.isNaN(parsed.getTime()) ? "" : localDateISO(parsed);
 }
+
+// crypto.randomUUID() only exists on iOS 15.4+ (and secure contexts). The iOS
+// project targets iOS 15.0, so fall back instead of throwing on every save.
+export function createId() {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // fall through
+  }
+  const random = () => Math.random().toString(16).slice(2, 10).padEnd(8, "0");
+  return `${random()}-${random().slice(0, 4)}-4${random().slice(0, 3)}-${random().slice(0, 4)}-${random()}${random().slice(0, 4)}`;
+}
