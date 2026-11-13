@@ -7,6 +7,7 @@ import { Button, SoftCard, SectionTitle } from "../components/ui.jsx";
 import { todayISO } from "../lib/dates";
 import { mealSuggestions, defaultRestaurants, createRestaurantRecord, cuisineCategories, normalizeText, suggestionKey, getMealTypeForNow, getCuisineFallbackRestaurant, getSmartFoodSuggestions } from "../lib/food";
 import { classNames } from "../lib/utils";
+import { StoredImage } from "../components/StoredImage.jsx";
 
 export 
 function Meals({ log, setLog }) {
@@ -413,7 +414,7 @@ function Meals({ log, setLog }) {
                 {smartFoodSuggestions.slice(0, 5).map((suggestion) => (
                   <div key={suggestion.key} className="rounded-3xl bg-[hsl(30_30%_98%)] p-3 shadow-sm dark:bg-zinc-800">
                     {suggestion.photo_url ? (
-                      <img
+                      <StoredImage
                         src={suggestion.photo_url}
                         alt=""
                         className="h-36 w-full rounded-3xl object-cover"
@@ -556,7 +557,7 @@ function Meals({ log, setLog }) {
             Upload restaurant/menu photo
             <input type="file" accept="image/*" className="hidden" onChange={handleRestaurantPhotoUpload} />
           </label>
-          {restaurantForm.photo_url && <img src={restaurantForm.photo_url} alt="" className="h-36 w-full rounded-3xl object-cover" />}
+          {restaurantForm.photo_url && <StoredImage src={restaurantForm.photo_url} alt="" className="h-36 w-full rounded-3xl object-cover" />}
 
           <Button onClick={saveRestaurant} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-3 text-white">Save Restaurant</Button>
         </div>
@@ -570,7 +571,7 @@ function Meals({ log, setLog }) {
         <input type="file" accept="image/*" className="hidden" onChange={handleFoodPhotoUpload} />
       </label>
       {foodPhotoPreview && (
-        <img src={foodPhotoPreview} alt="" className="mt-3 h-40 w-full rounded-3xl object-cover" />
+        <StoredImage src={foodPhotoPreview} alt="" className="mt-3 h-40 w-full rounded-3xl object-cover" />
       )}
     </SoftCard>
 

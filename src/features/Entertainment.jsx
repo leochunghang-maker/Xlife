@@ -9,6 +9,7 @@ import { entertainmentNews } from "../lib/entertainment";
 import { classNames } from "../lib/utils";
 import { Gym } from "./Gym.jsx";
 import { planInspirationIdeas, createBlankChoiceBlock, normalizePlan } from "../lib/plans";
+import { StoredImage } from "../components/StoredImage.jsx";
 
 export 
 function Entertainment({ log, setLog }) {
@@ -454,7 +455,7 @@ function Entertainment({ log, setLog }) {
             ) : (
               memorySnaps.map((snap, index) => (
                 <div key={`${snap.id || snap.taken_at || "snap"}-${index}`} className="overflow-hidden rounded-3xl bg-zinc-100 shadow-sm dark:bg-zinc-800">
-                  <img src={snap.url} loading="lazy" decoding="async" className="h-48 w-full object-cover" alt={snap.caption || "Memory"} />
+                  <StoredImage src={snap.url} className="h-48 w-full object-cover" alt={snap.caption || "Memory"} />
 
                   <div className="p-3 text-sm">
                     <p className="font-semibold">{snap.caption || "An Xlife moment"}</p>

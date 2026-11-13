@@ -8,6 +8,7 @@ import { todayISO } from "../lib/dates";
 import { getMealTypeForNow } from "../lib/food";
 import { getMemoryStreak, getAllMemorySnaps } from "../lib/dailyLog";
 import { classNames } from "../lib/utils";
+import { StoredImage } from "../components/StoredImage.jsx";
 
 
 const emptyFoodForm = { meal_type: getMealTypeForNow(), name: "", calories: "", protein_g: "", sugar_g: "", cost: "", rating: 0, notes: "" };
@@ -231,7 +232,7 @@ function Snaps({ log, setLog, pendingSnap, setPendingSnap }) {
         )}>
           <div className={classNames("w-full", preview ? "h-[38dvh]" : "h-full")}>
             {preview ? (
-              <img src={preview} alt="Snap preview" className="h-full w-full object-contain" />
+              <StoredImage src={preview} alt="Snap preview" className="h-full w-full object-contain" />
             ) : (
               <div className="flex h-full flex-col items-center justify-center bg-gradient-to-b from-zinc-900 via-zinc-950 to-black px-8 text-center">
                 <div className="mb-4 rounded-full bg-white/10 p-5">

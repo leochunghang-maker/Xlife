@@ -7,6 +7,7 @@ import { moodOptions, initialLog, getOnThisDayMemories, getAllMemorySnaps, readH
 import { classNames } from "../lib/utils";
 import { formatSleepDuration, shouldShowWakeConfirmation } from "../lib/sleep";
 import { SleepHealthKitCard, WakeConfirmationSheet } from "./Sleep.jsx";
+import { StoredImage } from "../components/StoredImage.jsx";
 
 export 
 function Dashboard({ log, setLog, totals, go }) {
@@ -81,7 +82,7 @@ function Dashboard({ log, setLog, totals, go }) {
         <SoftCard>
           <SectionTitle icon={Camera} title="Today's snaps" action={<Button variant="ghost" size="sm" onClick={() => go('/snaps')}>Open</Button>} />
           {log.snaps.length ? (
-            <div className="grid grid-cols-3 gap-2">{log.snaps.map((s, i) => <img key={`${s.taken_at || i}-${i}`} src={s.url} decoding="async" className="aspect-square object-cover rounded-2xl" alt={s.caption || "Snap"} />)}</div>
+            <div className="grid grid-cols-3 gap-2">{log.snaps.map((s, i) => <StoredImage key={`${s.taken_at || i}-${i}`} src={s.url} className="aspect-square object-cover rounded-2xl" alt={s.caption || "Snap"} />)}</div>
           ) : (
             <p className="text-sm text-zinc-500">No snaps yet today. Open Snaps to capture one.</p>
           )}
@@ -96,7 +97,7 @@ function Dashboard({ log, setLog, totals, go }) {
                   <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-zinc-400">{group.label} · {group.iso}</p>
                   <div className="grid grid-cols-3 gap-2">
                     {group.snaps.slice(0, 3).map((snap, index) => (
-                      <img key={`${snap.id || snap.taken_at || "m"}-${index}`} src={snap.url} loading="lazy" decoding="async" className="aspect-square rounded-2xl object-cover" alt={snap.caption || "Memory"} />
+                      <StoredImage key={`${snap.id || snap.taken_at || "m"}-${index}`} src={snap.url} className="aspect-square rounded-2xl object-cover" alt={snap.caption || "Memory"} />
                     ))}
                   </div>
                 </div>
@@ -242,7 +243,7 @@ function DailyLogSummary({ summary }) {
         </div>
         <div className="rounded-3xl bg-white p-4 shadow-sm dark:bg-zinc-900">
           <p className="font-bold">Snaps</p>
-          {summary.snaps.length ? <div className="mt-2 grid grid-cols-3 gap-2">{summary.snaps.map((snap, index) => <img key={`${snap.id || snap.taken_at || "snap"}-${index}`} src={snap.url} loading="lazy" decoding="async" className="aspect-square rounded-2xl object-cover" alt={snap.caption || "Snap"} />)}</div> : <p className="mt-1 text-sm text-zinc-500">No photos.</p>}
+          {summary.snaps.length ? <div className="mt-2 grid grid-cols-3 gap-2">{summary.snaps.map((snap, index) => <StoredImage key={`${snap.id || snap.taken_at || "snap"}-${index}`} src={snap.url} className="aspect-square rounded-2xl object-cover" alt={snap.caption || "Snap"} />)}</div> : <p className="mt-1 text-sm text-zinc-500">No photos.</p>}
         </div>
         <div className="rounded-3xl bg-white p-4 shadow-sm dark:bg-zinc-900">
           <p className="font-bold">Cycle</p>
