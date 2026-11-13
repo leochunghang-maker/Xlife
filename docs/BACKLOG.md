@@ -1,6 +1,6 @@
 # Xlife engineering backlog and cloud migration plan
 
-_Last updated: 2026-11-12 (reliability pass 1 + optimization pass 2)._
+_Last updated: 2026-11-13 (pass 3: full backlog)._
 
 This is an honest record of where the code stands. "Working" means it runs on the
 device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
@@ -9,33 +9,72 @@ device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
 
 | Area | Status | Notes |
 |---|---|---|
-| Onboarding, create account, sign in | **Prototype** | The profile is stored on the phone (`dayflow_user`). Passwords are **not** stored, and sign-in only checks the email. This is not real authentication. |
-| Bottom navigation (5 tabs), camera-first start | Working | Opens on Snaps after onboarding or sign-in. |
-| Snaps: take a photo or pick one from the gallery | Working (needs on-device check) | Uses `@capacitor/camera` on iOS and a file input on the web. Uses the native camera UI, not a live in-app viewfinder. |
-| Snaps: Save Memory / Mark Food / Track Spending | Working | Photos are saved as compressed JPEG data URLs. |
-| Home dashboard, mood, notes, calorie progress | Working | Data rolls over per day and is archived by date. |
-| Day calendar / history | Working | Reads `dayflow_daily_logs`, the sleep, workout, meal, and spending history, and the period logs. |
-| Meal logging (manual) | Working | |
-| AI food recognition from a photo | **Not built** | There's no vision API. The Mark Food form asks you to type the values in. |
-| Restaurant catalog (add, search, save, reject) | Working (local only) | Seeded with 2 sample restaurants. |
-| "Smart pick" recommendations | Prototype | Ranked on the phone from your own meals and catalog. It isn't AI and doesn't use live data. Sample fallback ideas are labelled. |
-| Nearby / current-location restaurant search | **Not built** | Needs a place-data provider (Google Places, Yelp, Foursquare). |
-| GYM tracker + Done Workout + history | Working | One weight/reps entry per exercise. There's no multi-set support yet. Done Workout collapses into a summary (exercises, volume) and doesn't save duplicates. |
-| Sleep: manual entry and "Are you awake?" | Working | |
-| Apple Health / HealthKit sleep sync | **Not built** | There's no native plugin or entitlement. The button now says "soon" and no longer fakes data. |
-| Cycle tracking + calendar | Working (local only) | Phase is estimated with a fixed 28-day model. |
-| Wellness insights | Working (local only) | Uses only real logs now. Earlier builds mixed in generated sample logs. |
-| Us: partner pairing / invite codes | **Mock** | The code is saved on this phone only. "Preview with demo partner" is a local demo. |
-| Us: partner updates feed | **Mock** | Sample cards built from your own log. They're labelled as a demo. |
-| Us: plan builder, send, choose, final plan | Prototype | Works on one phone. "Send to partner" doesn't send anything. |
-| Us: memories feed | Working (local only) | Shows all saved memories, including earlier days. |
-| Entertainment | **Static** | Sample headlines, labelled as not live. |
-| Export 30-day PDF | Not built | The button is disabled and marked "coming soon". |
-| Supabase | Scaffold only | `src/lib/supabase.js` has helper stubs and isn't called anywhere. |
+| Onboarding, create account, sign in | Working | **Local mode:** the profile is on the phone, there is no password, and sign-in checks the email only. Create Account no longer replaces an existing profile and offers "Sign in instead". **Cloud mode:** Supabase email and password auth. On sign-in, data this phone doesn't have yet is restored additively. |
+| Snaps (camera, gallery, Memory / Food / Spending) | Working (needs on-device check) | Photos go to the photo store, not localStorage. Memory streak. |
+| Photo storage | Working (needs on-device check) | `@capacitor/filesystem` on iOS and IndexedDB on the web, with a non-destructive migration of old inline photos. |
+| Home: dashboard, mood, journal, calendar | Working | Journal prompts, on-this-day notes and memories, real 7-day averages. |
+| Wake prompt | Working | Uses the onboarding wake-up time (from 2 h before to 4 h after). "Not yet" snoozes for 1 h, at most twice a day. "Don't ask again today". |
+| Day rollover | Working | Also runs if the app stays open past midnight. Waits, with a banner, while a form has unsaved typing. |
+| Meal logging, Quick add, My foods | Working | |
+| Barcode lookup | Working (web tested with a mocked API; scanning needs on-device check) | Open Food Facts API v2 (ODbL). The values fill the form for review. |
+| AI food photo estimate | **Built, off until configured** | Edge Function `estimate-nutrition` (OpenAI vision, server-side key, per-user daily quota). Requires a signed-in Cloud user and `VITE_ENABLE_AI_NUTRITION=true`. |
+| Restaurant catalog | Working (local) | Samples are labelled "Sample", seeded once, and never re-seeded or padded back into suggestions. |
+| Nearby restaurant search | **Not built** | Needs a keyed place provider. Xlife never invents restaurants. |
+| GYM | Working | Multi-set, previous values, rest timer with optional notification, PR badges, summary, CSV export. |
+| Sleep (manual + wake confirmation) | Working | HealthKit sync is not built. |
+| Cycle tracking | Working (local) | Estimates learned from the user's logged periods, fertile window, late and irregular notes, opt-in reminders, 12-month report (print or PDF on web, share sheet on iOS). |
+| Wellness insights | Working (local) | Uses the learned cycle averages. |
+| App lock (Face ID / passcode) | Built (needs on-device check) | `@capgo/capacitor-native-biometric`. Re-locks after 1 minute in the background. |
+| Reminders (journal / period / rest) | Built (needs on-device check) | `@capacitor/local-notifications`. All are opt-in. |
+| Us: Together, question of the day, plans, memories | Working (local) | The question's partner reveal and the partner feed work through Cloud. |
+| Us: real pairing and partner feed | **Built, off until configured** | Invite codes are single-use and expire after 7 days. The partner sees only shared categories (RLS). |
+| Partner sharing controls | Working | Health, intimacy, journal, sleep, spending and mood are private by default. Mirrored to `couple_shares` when Cloud is on. |
+| Demo partner | Labelled demo | Persisted until "End demo". |
+| Cloud backup / restore | **Built, off until configured** | Idempotent upserts and photo upload to a private bucket. Restore only adds. Also backs up in the background (at most every 10 min). |
+| Entertainment headlines | Static (labelled) | Needs a licensed source. |
+| iOS widgets | **Not built** | Needs a WidgetKit extension and an App Group in Xcode. |
 
-## 2. Prioritized backlog
+## 2. What changed in pass 3 (branch `feat/backlog-pass-2`)
 
-### P0: reliability (this pass, needs iPhone verification)
+- **Refactor:** `App.jsx` (about 4,000 lines) is split into `features/*`, `components/*` and `lib/*` with no behaviour change. Commit `bd56131`.
+- **Bugs:**
+  - Create Account no longer overwrites an existing profile.
+  - The wake-time preference is now used.
+  - The wake prompt no longer returns after its snooze.
+  - `dayflow_last_active_at` was written JSON-quoted and never parsed.
+  - The midnight reload no longer loses half-typed forms.
+  - Photos are out of localStorage.
+  - The partner demo is persisted.
+  - Sample restaurants are seeded once and stay deletable.
+- **Security:** Capacitor iOS was bumped from 8.3.4 to 8.6.2 to fix GHSA-rvm3-566m-v7fv.
+- **Features:** all 16 competitor ideas except iOS widgets (see section 4).
+- **Backend:**
+  - `supabase/migrations` (verified on Postgres 17 with an RLS smoke test).
+  - `supabase/functions/estimate-nutrition` (type-checked with Deno).
+  - Client code behind flags.
+
+## 3. Backlog (what's left)
+
+### Needs you (credentials / device)
+1. Run the on-device checks in `docs/SETUP.md` §6:
+   - camera
+   - photo migration on an iPhone with existing data
+   - Face ID
+   - notifications
+   - barcode scanning
+   - share sheet exports
+2. Create the Supabase project, run the migrations, set the env and secrets, and deploy the function (`docs/SETUP.md`).
+3. Replace the default Capacitor app icon.
+
+### Next engineering
+- Two-way sync with conflict resolution (today: upload is idempotent, restore is additive, and there are no deletes in the cloud).
+- Delete orphaned photos (deleting a record doesn't remove its file yet), plus cloud delete propagation.
+- Realtime partner updates (Supabase Realtime), and shared plans that both partners can edit.
+- iOS WidgetKit extension (partner's latest snap, days together, countdown) using an App Group.
+- HealthKit sleep import, a nearby-restaurants provider, and live entertainment data. Each needs a provider or entitlement decision.
+- CI: run lint, build, Playwright smoke tests and the RLS test on every PR.
+
+### Done in pass 1 (reliability, needs iPhone verification)
 - [x] Snaps first-capture review screen. The pending photo state moved into `AppShell` and is mirrored to `xlife_pending_snap`. Captures are guarded against re-entry, and cancel and permission errors are handled.
 - [x] Real camera via `@capacitor/camera` + iOS privacy strings in `Info.plist`.
 - [x] Photo persistence: compressed data URLs only, never `blob:` URLs or temporary native file paths.
@@ -47,22 +86,7 @@ device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
 - [x] User-visible Dayflow branding changed to Xlife. Storage keys are deliberately unchanged.
 - [x] Removed fabricated data: demo meals and snaps in new logs, fake Apple Health sync, fake food estimate, mock wellness stats.
 
-### P1: next
-1. Move photos out of localStorage into `@capacitor/filesystem`, keeping a path in the record. This removes the ~5 MB quota ceiling. Migrate existing data URLs lazily.
-2. Supabase Phase 1: Auth (email), `profiles`, persistent session, logout, RLS.
-3. Real partner pairing (Phase 3 below), which replaces the demo partner.
-4. Split `App.jsx` (~3,700 lines) into `features/{snaps,meals,home,fun,health}`, with no behaviour change.
-5. Add a test harness (Vitest + Playwright) to CI with the smoke flows used for this pass.
-
-### P2
-- Server-side AI (Supabase Edge Function → OpenAI vision) for food photos, showing results as estimates.
-- Place-data provider for nearby restaurants, plus location permission (`NSLocationWhenInUseUsageDescription`).
-- HealthKit plugin (read-only sleep) as an option.
-- Live camera viewfinder (e.g. `@capacitor-community/camera-preview`) if the native picker isn't good enough.
-- Multi-set workout logging, PDF export, live entertainment data.
-- Real app icon. The committed `AppIcon` is still the default Capacitor icon.
-
-### P0b: optimization pass 2 (done, needs iPhone verification)
+### Done in pass 2 (optimization, needs iPhone verification)
 - [x] `crypto.randomUUID` fallback (`createId`). The iOS target is 15.0, but randomUUID needs 15.4+, so every save would have thrown on older iOS.
 - [x] Today's log writes are debounced (250 ms) and flushed when the app is hidden, closed, or unmounted. Notes no longer re-serialise megabytes of photos on every keystroke. The Home calendar no longer re-parses all history on every keystroke.
 - [x] `dayflow_last_active_at` updates whenever the app goes to the background, not only when Home opens. This makes the "Are you awake?" timing more accurate.
@@ -76,34 +100,32 @@ device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
 - [x] Manual sleep entry computes the duration from bedtime and wake time.
 - [x] Accessibility: aria labels on icon buttons, mood, calendar days, and cycle rows. `aria-current` on the tab bar, `aria-pressed` on toggles. Lazy-loaded image lists.
 - [x] Logout and delete restaurant ask for confirmation.
-- [ ] Not fixed (needs a product decision): Create Account overwrites an existing local profile, though the data is kept. The wake-time preference from onboarding isn't used yet.
+- [x] (Fixed in pass 3) Create Account overwriting a profile; the unused wake-time preference.
 
-## 3. Competitor comparison and improvement ideas
+## 4. Competitor comparison and improvement ideas
 
-Researched on 2026-11-12 from public product pages and reviews (Apple Support, Flo App Store listing, Clue Support, Hevy feature pages, Strong/Hevy comparisons, MyFitnessPal / Cal AI coverage, Locket/BeReal/couple-widget roundups). Effort: S ≈ under a day, M ≈ 2–5 days, L ≈ 1–3 weeks.
+Researched on 2026-11-12. Effort: S is under a day, M is 2–5 days, L is 1–3 weeks.
 
 | # | Idea | Inspired by | Effort | Status |
 |---|---|---|---|---|
-| 1 | Done Workout summary (exercises done, total volume) + no duplicate saves | Strong, Hevy workout summaries | S | **Implemented (pass 2)** |
-| 2 | Real 7-day nutrition averages on Home | MyFitnessPal weekly nutrition | S | **Implemented (pass 2)** |
-| 3 | "On this day" memories (1 week / 1 month / 1 year ago) | Day One "On This Day", Snapchat Memories | S | **Implemented (pass 2)** |
-| 4 | Memory streak on Snaps | Snapchat streaks, BeReal streaks | S | **Implemented (pass 2)** |
-| 5 | Honest cycle estimates (labelled, undoable period marks) | Apple Health Cycle Tracking | S | **Implemented (pass 2)** |
-| 6 | Multiple sets per exercise with a "previous" column, an automatic rest timer started by ticking a set, and PR badges | Hevy (5 s–5 min per-exercise timer, previous values, live PRs), Strong | M | Proposed (P1) |
-| 7 | Period predictions from *your* logged history (average cycle and period length), a 6-day fertile-window estimate, and prediction notifications. Clearly marked as estimates and not contraception. | Apple Health (predictions from logged history, fertile window = next start − 13 days), Clue, Flo | M | Proposed (P1) |
-| 8 | Food photo → AI estimate *with quick correction* (edit portion, "add oil/butter", typed or voice description), confidence label, and review before saving. Server-side only. | Cal AI (photo-first, depth-assisted), MyFitnessPal Meal Scan / Voice Log (fine-tune ingredients) | L | Proposed (P2, needs Supabase Edge Function + OpenAI) |
-| 9 | Barcode scan + reusable "My foods" / recent meals for 1-tap re-logging | MyFitnessPal, Lose It | M | Proposed |
-| 10 | iOS home-screen widgets: partner's latest snap, days together, countdown to the next plan | Locket (photo widget), Dote, Till, Daily Us | L (native WidgetKit + sync) | Proposed (after real pairing) |
-| 11 | Couple daily question / daily photo prompt that both see once both have answered | BeReal "post to see", Candle, Daily Us | M (needs Supabase) | Proposed |
-| 12 | Shared calendar with anniversary / "days together" counter and countdowns in Us | Between, Dote | S–M | Proposed (local version S) |
-| 13 | Journal upgrades: prompts/templates, daily reminder, Face ID lock for Notes and Health | Day One (prompts, reminders, passcode lock) | M | Proposed |
-| 14 | Cycle report PDF export (last 12 months) for a doctor | Apple Health, Flo | M | Proposed |
-| 15 | Workout CSV export / import from Strong or Hevy | Hevy, Strong | S–M | Proposed |
-| 16 | Partner-safe sharing controls per category (cycle/intimacy/journal private by default) | Flo for Partners, Between privacy | M | Proposed (part of Phase 3) |
+| 1 | Done Workout summary + no duplicate saves | Strong, Hevy | S | **Implemented (pass 2)** |
+| 2 | Real 7-day nutrition averages | MyFitnessPal | S | **Implemented (pass 2)** |
+| 3 | "On this day" memories | Day One, Snapchat Memories | S | **Implemented (pass 2)**, plus on-this-day journal notes (pass 3) |
+| 4 | Memory streak | Snapchat, BeReal | S | **Implemented (pass 2)** |
+| 5 | Honest, labelled cycle estimates | Apple Health | S | **Implemented (pass 2)** |
+| 6 | Multi-set logging, previous values, rest timer, PR badges | Hevy, Strong | M | **Implemented (pass 3)** |
+| 7 | Period and fertile-window predictions from your own history + notifications | Apple Health, Clue, Flo | M | **Implemented (pass 3)**. Notifications need on-device check. |
+| 8 | AI food photo estimate with correction and confidence | Cal AI, MyFitnessPal Meal Scan | L | **Built, needs credentials** (Edge Function + OpenAI key) |
+| 9 | Barcode scan + My foods / recent meals | MyFitnessPal, Lose It | M | **Implemented (pass 3)** with Open Food Facts |
+| 10 | iOS home-screen widgets | Locket, Dote, Till | L | **Skipped:** needs a native WidgetKit target and an App Group built and tested in Xcode on a Mac |
+| 11 | Daily couple question, revealed after both answer | BeReal, Candle, Daily Us | M | **Implemented (pass 3)**. The local answer works now; the partner reveal needs Cloud (RLS-enforced). |
+| 12 | Anniversary / days-together counter + countdowns | Between, Dote | S–M | **Implemented (pass 3)**, local |
+| 13 | Journal prompts, reminder, Face ID lock | Day One | M | **Implemented (pass 3)**. Reminder and lock need on-device check. |
+| 14 | Cycle report for a doctor (12 months) | Apple Health, Flo | M | **Implemented (pass 3)** as a printable view and an HTML share file (Print → Save as PDF) |
+| 15 | Workout CSV export | Hevy, Strong | S–M | **Implemented (pass 3)** (export; import from Strong/Hevy is not built) |
+| 16 | Per-category partner sharing, private by default | Flo for Partners, Between | M | **Implemented (pass 3)**: the UI, plus enforcement in the database (RLS) |
 
-Top priorities after cloud auth: #6 and #7 (high daily value, no backend needed), then #8 (needs the AI backend), then #10, #11, and #16 (need real pairing).
-
-## 4. localStorage key inventory (do not rename)
+## 5. localStorage key inventory (do not rename)
 
 | Key | Shape | Written by |
 |---|---|---|
@@ -124,18 +146,49 @@ Top priorities after cloud auth: #6 and #7 (high daily value, no backend needed)
 | `dayflow_fun_plans` | plans array | Fun |
 | `xlife_pending_snap` | the photo awaiting review (cleared on save/retake) | Snaps (new) |
 | `dayflow_snaps`, `dayflow_memories` | read-only legacy fallbacks | none (read only) |
+| `xlife_photo_migration_v1` | ISO time the inline-photo migration last completed | main.jsx (pass 3) |
+| `xlife_wake_prompt_state` | `{ date, snoozes, skipped }` | Wake prompt (pass 3) |
+| `xlife_sample_restaurants_seeded` | ISO time samples were seeded (never re-seed) | Meals (pass 3) |
+| `xlife_partner_demo` | demo partner preview, persisted until ended | Us (pass 3) |
+| `xlife_rest_seconds` | rest timer length | GYM (pass 3) |
+| `xlife_reminders` | `{ journal: { enabled, time }, period: { enabled }, restTimer: { enabled } }` | Settings, Health, GYM (pass 3) |
+| `xlife_app_lock` | `{ enabled }` | Settings (pass 3) |
+| `xlife_partner_privacy` | `{ [category]: boolean }` | Settings (pass 3) |
+| `xlife_couple` | `{ anniversary, countdowns[] }` | Us → Together (pass 3) |
+| `xlife_daily_answers` | `{ [date]: { question, answer } }` | Us → Question of the day (pass 3) |
+| `xlife_my_foods` | favourite foods array | Meals → Quick add (pass 3) |
+| `xlife_cloud_status`, `xlife_cloud_uploaded_photos` | last backup, uploaded photo refs | Xlife Cloud (pass 3) |
+| `sb-*-auth-token` | Supabase session (tokens, never the password) | supabase-js, only when Cloud is configured |
+
+Photos: records now hold `xlife-photo:<id>` references. The image files live in `Directory.Data/photos/<id>.jpg` on iOS and in IndexedDB `xlife/photos` on the web. Old `data:image/...` values are still rendered, and they are migrated at startup. A key is rewritten only after every photo in it has been saved and read back. A key that changes during the migration is skipped and retried on the next launch.
+
+Shapes extended without renaming anything:
+- Exercise entries gain `sets[]`. The legacy `weight`/`reps`/`done` fields are kept and mirror set 1.
+- Restaurants gain `is_sample`. Legacy sample copies are tagged by name and notes on load.
 
 The handover mentions `xlife_partner_connection`. This repository uses `dayflow_partner_connection`.
 If the local `~/dayflow` copy uses the `xlife_` key, reconcile the two before merging.
 
-## 5. Cloud migration plan (Supabase)
+## 6. Cloud architecture (implemented, disabled until configured)
 
-Principles: local data is the source of truth until a successful upload is confirmed.
-Never delete local keys as part of migration. Make every upload idempotent.
-
-1. **Phase 1: Auth & profiles.** Supabase email auth. A `profiles(id = auth.uid(), name, birthday, preferences jsonb)` table. RLS is `id = auth.uid()`. Keys go in `.env` (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` only; the anon key is public by design). Replace the local sign-in. On first cloud sign-in, link the existing local profile.
-2. **Phase 2: Data sync.** Tables `daily_logs(user_id, date, log jsonb, updated_at)` (unique `user_id, date`), `meals`, `workouts`, `spending`, `sleep`, `period_logs`, `restaurants`, `plans`. Every row gets a client-generated UUID `id`, `updated_at`, and `deleted_at`. Migration: read each local key, then upsert on `id` (or `user_id, date`). On conflict, the higher `updated_at` wins, so newer cloud data is never overwritten. Record progress in a new key, `xlife_migration_state`. Keep local keys as an offline cache.
-3. **Phase 3: Couple pairing.** `couples(id, user_a, user_b, status)` and `invites(code, inviter, expires_at, accepted_by)`. A Postgres function accepts an invite atomically. Per-category share settings live in `share_settings(user_id, category, enabled)`. Health, intimacy, and journal entries are private by default. RLS lets a partner read only rows in categories the owner shares. Shared `plans` and `memories` are readable and writable by both members. Realtime channels are scoped per couple.
-4. **Phase 4: Photo storage.** A private Supabase Storage bucket at `/{user_id}/{uuid}.jpg`, served through signed URLs. Upload the local data URLs (or filesystem files) and swap the record to a storage path once the upload succeeds.
-5. **Phase 5: AI.** Edge Functions call OpenAI with server-held keys. Never use `VITE_` keys for this. Results are labelled as estimates, and the user confirms before saving.
-6. **Phase 6: HealthKit.** A native plugin reads sleep analysis only, with explicit permission. It's off by default.
+- **Tables:**
+  - Each data table has the same shape: `id text` (`<user_id>:<local id>`), `user_id`, `date`, `data jsonb`, timestamps.
+  - Data tables: `daily_logs`, `meals`, `workouts`, `spending`, `sleep_logs`, `period_logs`, `intimacy_logs`, `restaurants`, `plans`, `memories`, `journal_entries`.
+  - Other tables: `profiles`, `couples`, `couple_invites`, `couple_shares`, `couple_answers`, `ai_requests`.
+- **RLS:**
+  - Owners have full access to their own rows.
+  - A partner can only `select` a category the owner shares, via `partner_can_read(owner, category)`.
+  - `daily_logs` (mixed categories) is never readable by a partner.
+  - A daily answer is revealed only after the viewer has answered.
+- **Pairing:** `create_couple_invite()` and `accept_couple_invite(code)` are security-definer functions, so codes are single-use and expire after 7 days. One couple per user. `leave_couple()` unpairs.
+- **Storage:** a private `photos` bucket at `<user_id>/<photo id>.jpg`. The owner has full access. A partner can read only if the owner shares memories (signed URLs).
+- **Migration rules:**
+  - Local data is never deleted.
+  - Backup uses idempotent upserts.
+  - Photos upload once each (tracked in `xlife_cloud_uploaded_photos`).
+  - Restore only adds days and records that are missing locally, and downloads missing photos.
+- **AI:**
+  - The OpenAI key is a function secret only.
+  - JWT is required.
+  - Per-user daily limit (`AI_DAILY_LIMIT`, default 30).
+  - Strict JSON-schema output, shown as approximate, editable values.
