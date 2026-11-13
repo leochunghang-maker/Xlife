@@ -89,7 +89,7 @@ function RestTimer({ endAt, onAdjust, onSkip }) {
   const mm = Math.floor(remaining / 60);
   const ss = String(remaining % 60).padStart(2, "0");
   return (
-    <div className="sticky top-2 z-20 flex items-center gap-2 rounded-3xl bg-zinc-900 p-3 text-white shadow-lg dark:bg-white dark:text-zinc-900" role="timer" aria-live="polite">
+    <div className="sticky top-[calc(5.75rem+env(safe-area-inset-top))] z-20 flex items-center gap-2 rounded-3xl bg-zinc-900 p-3 text-white shadow-lg dark:bg-white dark:text-zinc-900" role="timer" aria-live="polite">
       <Timer className="h-5 w-5" />
       <p className="flex-1 font-bold">{remaining ? `Rest ${mm}:${ss}` : "Rest over — next set!"}</p>
       <button className="rounded-2xl px-3 py-2 text-sm font-bold ring-1 ring-current" onClick={() => onAdjust(-15)} aria-label="Rest 15 seconds less">−15s</button>

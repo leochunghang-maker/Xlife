@@ -13,6 +13,7 @@ import { StoredImage } from "../components/StoredImage.jsx";
 import { useDirtyForm } from "../lib/dirtyForms";
 import { Together } from "./Together.jsx";
 import { PartnerFeed } from "./PartnerFeed.jsx";
+import { DailyQuestion } from "./DailyQuestion.jsx";
 
 export function Entertainment({ log, setLog }) {
   const [plans, setPlans] = useState(() => {
@@ -262,7 +263,12 @@ export function Entertainment({ log, setLog }) {
           </div>
         )}
 
-        {usTab === "updates" && <PartnerFeed />}
+        {usTab === "updates" && (
+          <div className="mb-3 space-y-3">
+            <DailyQuestion />
+            <PartnerFeed />
+          </div>
+        )}
 
         {usTab === "updates" && (
           <div className="space-y-3">

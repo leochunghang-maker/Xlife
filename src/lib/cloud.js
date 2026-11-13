@@ -289,3 +289,20 @@ export async function pushSharingPreferences() {
     { onConflict: "user_id,category" },
   );
 }
+
+// ------------------------------------------------------------------ daily question
+export async function saveDailyAnswerToCloud(date, question, answer) {
+  const session = await getCloudSession();
+  if (!session) return { skipped: true };
+  return supabase.from("couple_answers").upsert(
+    { id: rowId(session.user.id, `answer:${date}`), user_id: session.user.id, date, question, answer, updated_at: new Date().toISOString() },
+    { onConflict: "id" },
+  );
+}
+
+// Returns the partner's answer for `date`, or null (RLS hides it until you answer).
+export async function getPartnerAnswer(partnerId, date) {
+  if (!supabase || !partnerId) return null;
+  const { data } = await supabase.from("couple_answers").select("answer,question").eq("user_id", partnerId).eq("date", date).maybeSingle();
+  return data || null;
+}

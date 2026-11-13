@@ -10,6 +10,7 @@ try {
   psql("supabase/tests/supabase_stub.sql");
   console.log(psql("supabase/migrations/20261113000000_xlife_init.sql").split("\n").filter(l => /ERROR/.test(l)).join("\n") || "migration ok");
   console.log("re-run:", psql("supabase/migrations/20261113000000_xlife_init.sql") ? "idempotent ok" : "");
+  psql("supabase/migrations/20261113000100_couple_daily_question.sql");
   console.log(psql("supabase/tests/rls_smoke.sql"));
 } catch (e) { console.log("FAILED", e.stdout?.slice(-1500), e.stderr?.slice(-2500)); }
 await pg.stop();

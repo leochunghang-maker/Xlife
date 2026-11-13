@@ -43,3 +43,14 @@ select set_config('request.jwt.sub','22222222-2222-2222-2222-222222222222', fals
 select count(*) as ben_sees_after_unshare from public.memories;
 select public.leave_couple();
 select count(*) as couples_left from public.couples;
+-- daily question reveal rule
+select set_config('request.jwt.sub','11111111-1111-1111-1111-111111111111', false);
+select public.create_couple_invite() as code2 \gset
+select set_config('request.jwt.sub','22222222-2222-2222-2222-222222222222', false);
+select public.accept_couple_invite(:'code2') is not null as repaired;
+select set_config('request.jwt.sub','11111111-1111-1111-1111-111111111111', false);
+insert into public.couple_answers (id, user_id, date, question, answer) values ('a:q1', auth.uid(), '2026-11-13', 'Q?', 'Ann answer');
+select set_config('request.jwt.sub','22222222-2222-2222-2222-222222222222', false);
+select count(*) as ben_sees_answer_before_answering from public.couple_answers;
+insert into public.couple_answers (id, user_id, date, question, answer) values ('b:q1', auth.uid(), '2026-11-13', 'Q?', 'Ben answer');
+select count(*) as ben_sees_answers_after_answering from public.couple_answers;
