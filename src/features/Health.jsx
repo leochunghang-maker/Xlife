@@ -7,6 +7,8 @@ import { todayISO, toLocalDate, toISODate } from "../lib/dates";
 import { moodOptions } from "../lib/dailyLog";
 import { classNames } from "../lib/utils";
 import { getCyclePhase, toggleListValue, formatCycleDateTitle } from "../lib/cycle";
+import { predictCycle, isInRange } from "../lib/cyclePredict";
+import { CycleInsights } from "./CycleInsights.jsx";
 
 
 const phaseStyles = {
@@ -97,11 +99,17 @@ function CycleTracker() {
   const [expandedRows, setExpandedRows] = useState({});
   const [savedMessage, setSavedMessage] = useState("");
 
+  // Estimates learned from the user's own logged periods (falls back to the
+  // saved cycle start + 28-day model until there is history).
+  const prediction = useMemo(() => predictCycle(periodLogs), [periodLogs]);
+  const phaseStart = prediction.lastStart && prediction.lastStart > cycleStart ? prediction.lastStart : cycleStart;
+  const phaseFor = (dateISO) => getCyclePhase(phaseStart, dateISO, prediction.avgCycle, prediction.avgPeriod);
+
   const selectedPhase = useMemo(() => {
-    const calculated = getCyclePhase(cycleStart, selectedDate);
+    const calculated = getCyclePhase(phaseStart, selectedDate, prediction.avgCycle, prediction.avgPeriod);
     const savedPhase = periodLogs[selectedDate]?.phase || dailyLog.phase;
     return savedPhase ? { phase: savedPhase, day: periodLogs[selectedDate]?.cycleDay || calculated.day } : calculated;
-  }, [cycleStart, dailyLog.phase, periodLogs, selectedDate]);
+  }, [phaseStart, prediction.avgCycle, prediction.avgPeriod, dailyLog.phase, periodLogs, selectedDate]);
   const selectedDateTitle = formatCycleDateTitle(selectedDate);
   const isMarkedPeriod = dailyLog.flow !== "none" && dailyLog.phase === "period";
   const isIntimacyLogged = intimacyLogs.some((log) => log.date === selectedDate);
@@ -124,7 +132,7 @@ function CycleTracker() {
   }
 
   function saveLog() {
-    const phaseData = getCyclePhase(cycleStart, selectedDate);
+    const phaseData = phaseFor(selectedDate);
     const phase = dailyLog.phase || phaseData.phase;
     const nextLogs = {
       ...periodLogs,
@@ -150,7 +158,7 @@ function CycleTracker() {
   }
 
   function savePeriodLog(nextLog) {
-    const phaseData = getCyclePhase(cycleStart, selectedDate);
+    const phaseData = phaseFor(selectedDate);
     const logForDate = {
       ...blankCycleLog(),
       ...nextLog,
@@ -228,7 +236,7 @@ function CycleTracker() {
           </p>
           {!hasSavedCycleStart && (
             <p className="mt-2 rounded-2xl bg-zinc-100 p-3 text-xs text-zinc-500 dark:bg-zinc-800">
-              Set your cycle start date below for better estimates. Estimates use a simple 28-day model and are not medical predictions.
+              Mark your period days (or set your cycle start below) for estimates. Until then this uses a simple 28-day model — not a medical prediction.
             </p>
           )}
         </div>
@@ -329,6 +337,8 @@ function CycleTracker() {
         {savedMessage && <p className="mt-3 rounded-2xl bg-[hsl(160_50%_45%)]/10 p-3 text-sm text-zinc-600">{savedMessage}</p>}
       </SoftCard>
 
+      <CycleInsights prediction={prediction} periodLogs={periodLogs} />
+
       <SoftCard>
         <SectionTitle icon={CalendarDays} title="Cycle calendar" />
         <p className="mb-4 text-sm font-semibold text-zinc-500">
@@ -361,7 +371,9 @@ function CycleTracker() {
         <div className="mt-2 grid grid-cols-7 gap-1">
           {calendarDays.map((dateISO, index) => {
             if (!dateISO) return <div key={`empty-${index}`} />;
-            const { phase: calculatedPhase } = getCyclePhase(cycleStart, dateISO);
+            const { phase: calculatedPhase } = phaseFor(dateISO);
+            const isFertile = isInRange(dateISO, prediction.fertileStart, prediction.fertileEnd);
+            const isPredictedPeriod = isInRange(dateISO, prediction.nextStart, prediction.nextEnd);
             const phase = periodLogs[dateISO]?.phase || calculatedPhase;
             const isSelected = selectedDate === dateISO;
             const isToday = todayISO === dateISO;
@@ -375,8 +387,11 @@ function CycleTracker() {
                   "relative aspect-square rounded-2xl bg-zinc-50 text-xs font-bold transition dark:bg-zinc-800",
                   isSelected ? "bg-[hsl(24_80%_58%)] text-white shadow-sm" : `${phaseSoftStyles[phase]} text-zinc-700 dark:text-zinc-200`,
                   !isSelected && isToday ? "ring-2 ring-[hsl(24_80%_58%)]/30" : "",
-                  !isSelected && hasLog ? "border border-[hsl(160_50%_45%)]/40" : ""
+                  !isSelected && hasLog ? "border border-[hsl(160_50%_45%)]/40" : "",
+                  !isSelected && !hasLog && isPredictedPeriod ? "border border-dashed border-rose-400" : "",
+                  !isSelected && !hasLog && isFertile ? "border border-dashed border-teal-500" : ""
                 )}
+                aria-label={`${dateISO}${hasLog ? ", logged" : ""}${isPredictedPeriod ? ", estimated period" : ""}${isFertile ? ", estimated fertile window" : ""}`}
               >
                 {toLocalDate(dateISO).getDate()}
                 <span
@@ -428,7 +443,10 @@ function WellnessInsights({ log }) {
   const insights = useMemo(() => {
     const savedLogs = Object.values(readLocalJSON("dayflow_period_logs", {}));
     const currentMood = moodOptions.find((mood) => mood.id === log.mood) || moodOptions[2];
-    const currentPhase = getCyclePhase(localStorage.getItem("dayflow_cycle_start") || todayISO, todayISO);
+    const cyclePrediction = predictCycle(readLocalJSON("dayflow_period_logs", {}));
+    const savedStart = localStorage.getItem("dayflow_cycle_start") || todayISO;
+    const start = cyclePrediction.lastStart && cyclePrediction.lastStart > savedStart ? cyclePrediction.lastStart : savedStart;
+    const currentPhase = getCyclePhase(start, todayISO, cyclePrediction.avgCycle, cyclePrediction.avgPeriod);
     const dailyLog = {
       date: todayISO,
       phase: currentPhase.phase,
