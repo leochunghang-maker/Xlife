@@ -27,6 +27,7 @@ async function seeded(page, extra = {}) {
   // New capture goes to the photo store too
   await page.getByRole("button", { name: "Snaps" }).click();
   await page.locator('input[type=file]:not([capture])').setInputFiles(IMG);
+  await page.getByRole("button", { name: "Save Memory" }).click();
   await page.getByRole("button", { name: "Save as Memory" }).click();
   await page.waitForTimeout(300);
   ok("P1 new capture not inline", !(await page.evaluate(() => JSON.stringify(localStorage))).includes("data:image/"));

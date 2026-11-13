@@ -31,7 +31,7 @@ async function newPage(colorScheme = "light") {
   await page.getByRole("button", { name: "Create Account" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.waitForTimeout(400);
-  const title = await page.locator("header h1").textContent();
+  const title = await page.locator("h1").first().textContent();
   ok("opens on Snaps after onboarding", title === "Snaps", `title=${title}`);
   const scroll = await page.evaluate(() => [document.scrollingElement.scrollHeight, window.innerHeight]);
   ok("snaps camera screen fits viewport (no scroll)", scroll[0] <= scroll[1] + 1, JSON.stringify(scroll));
@@ -52,6 +52,7 @@ async function newPage(colorScheme = "light") {
   await page.waitForTimeout(500);
   ok("review survives reload", await page.getByRole("button", { name: "Save Memory" }).isVisible());
 
+  await page.getByRole("button", { name: "Save Memory" }).click(); // review step -> memory sheet
   await page.getByPlaceholder("Add a caption").fill("Beach day");
   await page.getByRole("button", { name: "Save as Memory" }).click();
   ok("memory saved message", await page.getByText("Memory saved").isVisible());
@@ -152,7 +153,7 @@ async function newPage(colorScheme = "light") {
   ok("legacy: old log archived under its date", Boolean(st.arch["2026-05-19"]) && st.arch["2026-05-19"].meals.length === 1);
   ok("legacy: calorie goal + workout carried, done reset", st.log.calorie_goal === 1800 && st.log.workout.type === "Leg" && st.log.workout.exercises.Squat.weight === "100" && st.log.workout.exercises.Squat.done === false, JSON.stringify(st.log.workout));
   ok("legacy: restaurants untouched", JSON.parse(await page.evaluate(() => localStorage.getItem("dayflow_restaurants")))[0].name === "My place");
-  ok("legacy: opens on Snaps", (await page.locator("header h1").textContent()) === "Snaps");
+  ok("legacy: opens on Snaps", (await page.locator("h1").first().textContent()) === "Snaps");
   await page.getByRole("button", { name: "Fun" }).click();
   await page.getByRole("button", { name: "Memories" }).click();
   ok("legacy: old memory still visible", await page.getByText("Old memory").isVisible());
@@ -286,10 +287,11 @@ async function newPage(colorScheme = "light") {
   await page.reload(); await page.locator("h1").first().waitFor();
   await page.evaluate(() => { const orig = Storage.prototype.setItem; window.__orig = orig; Storage.prototype.setItem = function (k, v) { if (k === "dayflow_log") { throw new DOMException("quota", "QuotaExceededError"); } return orig.call(this, k, v); }; });
   await page.locator('input[type=file]:not([capture])').setInputFiles(IMG);
+  await page.getByRole("button", { name: "Save Memory" }).click();
   await page.getByRole("button", { name: "Save as Memory" }).click();
   await page.waitForTimeout(300);
   ok("quota error shows banner instead of crashing", await page.getByText("Storage is full").isVisible());
-  ok("app still rendered after quota error", await page.locator("header h1").isVisible());
+  ok("app still rendered after quota error", await page.locator("h1").first().isVisible());
   await ctx.close();
 }
 
