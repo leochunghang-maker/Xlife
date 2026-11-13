@@ -23,11 +23,12 @@ npx cap open ios
 
 In Xcode, open the **App** target:
 
-1. **Signing & Capabilities:** choose your Team, and keep the bundle id `com.xlife.app` (or change it to your own).
+1. **Signing & Capabilities:** the project already has `DEVELOPMENT_TEAM = 2GTZ7KDKLY` and display name **Xlife** (from your local work); change the Team if you sign with another account, and keep the bundle id `com.xlife.app` (or change it to your own).
 2. **No extra capabilities are required.** Local notifications don't need the Push Notifications capability, and Face ID doesn't need an entitlement.
 3. `ios/App/App/Info.plist` already contains the privacy strings:
    - `NSCameraUsageDescription`: camera and barcode scanning.
    - `NSPhotoLibraryUsageDescription` / `NSPhotoLibraryAddUsageDescription`: gallery.
+   - `NSLocationWhenInUseUsageDescription` / `NSLocationAlwaysAndWhenInUseUsageDescription`: "Use My Location" in Meals → Find nearby restaurants (only when tapped).
    - `NSFaceIDUsageDescription`: App Lock.
 4. Choose your iPhone, then press **Run**.
 
@@ -146,7 +147,7 @@ Then rebuild: `npm run build && npx cap sync ios`.
 No setup is needed. The app uses the free [Open Food Facts](https://world.openfoodfacts.org) API (data under ODbL). Scanning uses the camera permission. On the web you can type the barcode number.
 
 ## 5. Not included (would need a provider or native work)
-- Nearby restaurants: Google Places, Yelp or Foursquare key, plus `NSLocationWhenInUseUsageDescription`.
+- In-app nearby restaurant results: needs a Google Places / Yelp / Foursquare key behind a server function. Today Meals → Find nearby restaurants opens Apple Maps / Google Maps with your cuisine and location instead of showing made-up places.
 - Live entertainment: a licensed API.
 - HealthKit sleep: a HealthKit plugin plus the entitlement.
 - Home-screen widgets: a WidgetKit extension plus an App Group in Xcode.
@@ -164,4 +165,5 @@ No setup is needed. The app uses the free [Open Food Facts](https://world.openfo
    - Gym → Export workouts (CSV) opens the share sheet.
    - Health → Cycle report → Share opens the share sheet.
 7. **Midnight:** leave the app open across midnight with text half-typed. The "new day" banner should appear and the text should stay.
-8. **Cloud (if configured):** on phone A, sign in and back up. Then sign in on phone B, check that the restore works, and check that pairing and sharing toggles control what the partner sees.
+8. **Snaps / Us / Meals (merged from your local build):** Snaps is full-screen with no header; after a photo you get Save Memory / Mark Food / Track Spending / Retake. In Us, Invite Partner shows a code, Copy/Share work. In Meals, Use My Location asks for permission and Open in Apple Maps leaves the app to Maps.
+9. **Cloud (if configured):** on phone A, sign in and back up. Then sign in on phone B, check that the restore works, and check that pairing and sharing toggles control what the partner sees.
