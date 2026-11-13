@@ -62,6 +62,26 @@ function refId(ref) {
   return ref.slice(PHOTO_REF_PREFIX.length).replace(/[^a-zA-Z0-9-]/g, "");
 }
 
+// Stores a data URL under a known reference (used when restoring from cloud).
+export async function savePhotoWithRef(ref, dataUrl) {
+  if (!isPhotoRef(ref) || !isInlinePhoto(dataUrl)) return;
+  const id = refId(ref);
+  if (hasNativeFiles()) {
+    await Filesystem.writeFile({ path: `photos/${id}.jpg`, data: dataUrl.slice(dataUrl.indexOf(",") + 1), directory: Directory.Data, recursive: true });
+  } else {
+    await idb("readwrite", (store) => store.put(dataUrl, id));
+  }
+  urlCache.delete(ref);
+}
+
+export async function hasPhoto(ref) {
+  return Boolean(await resolvePhoto(ref));
+}
+
+export function photoRefId(ref) {
+  return isPhotoRef(ref) ? refId(ref) : "";
+}
+
 // Saves a data URL and returns a reference. Throws if the photo could not be
 // stored and read back, so callers can keep the inline data URL instead.
 export async function savePhoto(dataUrl) {

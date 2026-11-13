@@ -4,6 +4,8 @@ import { Button } from "../components/ui.jsx";
 import { cuisineCategories, normalizeText } from "../lib/food";
 import { classNames } from "../lib/utils";
 import { toggleListValue } from "../lib/cycle";
+import { isSupabaseConfigured } from "../lib/supabase";
+import { cloudSignUp, cloudSignIn, restoreFromCloud } from "../lib/cloud";
 
 export function Onboarding({ onAuthenticated }) {
   const [screen, setScreen] = useState("welcome");
@@ -29,7 +31,9 @@ export function Onboarding({ onAuthenticated }) {
 
   const existingUser = readLocalJSON("dayflow_user", null);
 
-  function createAccount() {
+  const [busy, setBusy] = useState(false);
+
+  async function createAccount() {
     if (existingUser) {
       setAuthError(`This phone already has an Xlife profile for ${existingUser.email || existingUser.name || "another account"}. Sign in instead — creating a new account here would hide that profile's data.`);
       return;
@@ -39,8 +43,21 @@ export function Onboarding({ onAuthenticated }) {
       return;
     }
 
+    let cloudUserId = null;
+    if (isSupabaseConfigured) {
+      // Real account in Xlife Cloud. The password goes only to Supabase Auth.
+      setBusy(true);
+      const { data, error } = await cloudSignUp({ email: createForm.email.trim(), password: createForm.password, name: createForm.name.trim() });
+      setBusy(false);
+      if (error) {
+        setAuthError(error.message || "Couldn't create your cloud account.");
+        return;
+      }
+      cloudUserId = data?.user?.id || null;
+    }
+
     const user = {
-      id: createId(),
+      id: cloudUserId || createId(),
       name: createForm.name.trim(),
       email: createForm.email.trim(),
       birthday: createForm.birthday,
@@ -49,21 +66,50 @@ export function Onboarding({ onAuthenticated }) {
       createdAt: new Date().toISOString(),
     };
 
-    // Future Supabase Auth: replace this localStorage write with signUp() and a profiles insert.
     writeLocalJSON("dayflow_user", user);
     setCreatedUser(user);
     setAuthError("");
     setScreen("profile");
   }
 
-  function signIn() {
+  async function signIn() {
+    if (isSupabaseConfigured) {
+      setBusy(true);
+      const { data, error } = await cloudSignIn({ email: signInForm.email.trim(), password: signInForm.password });
+      setBusy(false);
+      if (error) {
+        setAuthError(error.message || "Couldn't sign in.");
+        return;
+      }
+      const localUser = readLocalJSON("dayflow_user", null);
+      if (localUser && normalizeText(localUser.email) !== normalizeText(signInForm.email)) {
+        setAuthError(`This phone already has an Xlife profile for ${localUser.email}. Sign in with that account.`);
+        return;
+      }
+      const cloudUser = data.user;
+      const profile = localUser || {
+        id: cloudUser.id,
+        name: cloudUser.user_metadata?.name || signInForm.email.split("@")[0],
+        email: cloudUser.email,
+        profile_photo_url: "",
+        createdAt: new Date().toISOString(),
+      };
+      if (!localUser) writeLocalJSON("dayflow_user", profile);
+      // Bring down anything this phone doesn't have yet (never overwrites).
+      restoreFromCloud().catch((restoreError) => console.warn("[xlife] restore failed", restoreError));
+      localStorage.setItem("dayflow_active_session", "true");
+      setAuthError("");
+      onAuthenticated(profile);
+      return;
+    }
+    // Local-only mode: profiles live on this phone and have no password
+    // (use the Face ID lock in Settings to protect the app).
     const savedUser = readLocalJSON("dayflow_user", null);
     if (!savedUser || normalizeText(savedUser.email) !== normalizeText(signInForm.email)) {
       setAuthError("We could not find that email yet. Create an account first or check the address.");
       return;
     }
 
-    // Future Supabase Auth: replace this mock session with signInWithPassword().
     localStorage.setItem("dayflow_active_session", "true");
     setAuthError("");
     onAuthenticated(savedUser);
@@ -189,7 +235,7 @@ export function Onboarding({ onAuthenticated }) {
                 </div>
               )}
               {authError && <p className="rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-600">{authError}</p>}
-              <Button onClick={createAccount} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-4 text-white">
+              <Button onClick={createAccount} disabled={busy} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-4 text-white">
                 Create Account
               </Button>
               <Button variant="ghost" onClick={() => setScreen("welcome")} className="w-full rounded-2xl">
@@ -207,7 +253,7 @@ export function Onboarding({ onAuthenticated }) {
               <input className="field" placeholder="Email" type="email" value={signInForm.email} onChange={(e) => setSignInForm({ ...signInForm, email: e.target.value })} />
               <input className="field" placeholder="Password" type="password" value={signInForm.password} onChange={(e) => setSignInForm({ ...signInForm, password: e.target.value })} />
               {authError && <p className="rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-600">{authError}</p>}
-              <Button onClick={signIn} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-4 text-white">
+              <Button onClick={signIn} disabled={busy} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-4 text-white">
                 Sign In
               </Button>
               <Button variant="ghost" onClick={() => setScreen("welcome")} className="w-full rounded-2xl">
@@ -274,7 +320,7 @@ export function Onboarding({ onAuthenticated }) {
             <div className="space-y-4">
               <div>
                 <p className="text-3xl font-black">Connect with your partner</p>
-                <p className="mt-1 text-sm text-zinc-500">Real pairing between two phones isn't available yet (it needs the planned cloud backend). Codes are saved on this phone only.</p>
+                <p className="mt-1 text-sm text-zinc-500">{isSupabaseConfigured ? "After setup, pair for real in Settings → Xlife Cloud (invite codes work across phones). Codes below are saved on this phone only." : "Real pairing between two phones needs Xlife Cloud, which isn't configured in this build. Codes are saved on this phone only."}</p>
               </div>
               <Button onClick={generateInviteCode} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-4 text-white">
                 Generate invite code

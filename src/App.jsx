@@ -1,3 +1,5 @@
+import { isSupabaseConfigured } from "./lib/supabase";
+import { AppLockGate } from "./components/AppLockGate.jsx";
 import { useState } from "react";
 import { readLocalJSON } from "./lib/storage";
 import { Onboarding } from "./features/Onboarding.jsx";
@@ -22,7 +24,7 @@ export default function App() {
 
   function handleLogout() {
     if (!window.confirm("Log out of Xlife? Your data stays on this phone.")) return;
-    // Future Supabase Auth: replace this with supabase.auth.signOut().
+    if (isSupabaseConfigured) import("./lib/cloud").then(({ cloudSignOut }) => cloudSignOut()).catch(() => {});
     localStorage.setItem("dayflow_active_session", "false");
     setUser(null);
   }
@@ -31,5 +33,9 @@ export default function App() {
     return <Onboarding onAuthenticated={handleAuthenticated} />;
   }
 
-  return <AppShell user={user} onLogout={handleLogout} />;
+  return (
+    <AppLockGate>
+      <AppShell user={user} onLogout={handleLogout} />
+    </AppLockGate>
+  );
 }

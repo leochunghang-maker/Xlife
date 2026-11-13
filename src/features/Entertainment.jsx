@@ -11,6 +11,8 @@ import { Gym } from "./Gym.jsx";
 import { planInspirationIdeas, createBlankChoiceBlock, normalizePlan } from "../lib/plans";
 import { StoredImage } from "../components/StoredImage.jsx";
 import { useDirtyForm } from "../lib/dirtyForms";
+import { Together } from "./Together.jsx";
+import { PartnerFeed } from "./PartnerFeed.jsx";
 
 export function Entertainment({ log, setLog }) {
   const [plans, setPlans] = useState(() => {
@@ -251,12 +253,16 @@ export function Entertainment({ log, setLog }) {
           ))}
         </div>
 
+        <Together plans={plans} />
+
         {connectedPartner?.demo && (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-3xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
             <p>Demo partner preview is on ({connectedPartner.name}). Nothing here comes from a real partner.</p>
             <Button size="sm" variant="secondary" className="shrink-0 rounded-2xl" onClick={() => setConnectedPartner(null)}>End demo</Button>
           </div>
         )}
+
+        {usTab === "updates" && <PartnerFeed />}
 
         {usTab === "updates" && (
           <div className="space-y-3">

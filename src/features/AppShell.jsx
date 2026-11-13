@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LayoutDashboard, Utensils, Camera, Sparkles, HeartPulse, LogOut } from "lucide-react";
+import { LayoutDashboard, Utensils, Camera, Sparkles, HeartPulse, Settings as SettingsIcon } from "lucide-react";
 import { readLocalJSON, writeLocalJSON, localDateISO, STORAGE_ERROR_EVENT } from "../lib/storage";
 import { Button } from "../components/ui.jsx";
 import { todayISO } from "../lib/dates";
@@ -11,12 +11,15 @@ import { Meals } from "./Meals.jsx";
 import { Snaps } from "./Snaps.jsx";
 import { Health } from "./Health.jsx";
 import { Entertainment } from "./Entertainment.jsx";
+import { Settings } from "./Settings.jsx";
+import { maybeAutoBackup } from "../lib/cloudAuto";
 
 export function AppShell({ user, onLogout }) {
   // Camera-first: the app opens on Snaps after sign-in / onboarding.
   const [route, setRoute] = useState("/snaps");
   const [log, setLog] = useState(loadTodayLog);
   const [storageWarning, setStorageWarning] = useState("");
+  const [settingsFocus, setSettingsFocus] = useState(null);
   // The captured photo awaiting "Save Memory / Mark Food / Track Spending".
   // Owned here (not inside Snaps) and mirrored to localStorage so it survives a
   // Snaps remount or a WebView reload while the native camera was open.
@@ -62,6 +65,7 @@ export function AppShell({ user, onLogout }) {
       if (document.visibilityState === "hidden") {
         flush();
         localStorage.setItem("dayflow_last_active_at", new Date().toISOString());
+        maybeAutoBackup();
       }
     }
     document.addEventListener("visibilitychange", handleVisibility);
@@ -154,8 +158,8 @@ export function AppShell({ user, onLogout }) {
             </h1>
           </div>
 
-          <Button variant="ghost" size="icon" className="rounded-2xl" onClick={onLogout} aria-label="Log out">
-            <LogOut className="h-5 w-5" />
+          <Button variant="ghost" size="icon" className="rounded-2xl" onClick={() => setSettingsFocus("top")} aria-label="Settings">
+            <SettingsIcon className="h-5 w-5" />
           </Button>
         </header>
 
@@ -180,6 +184,7 @@ export function AppShell({ user, onLogout }) {
               setLog={setLog}
               totals={{ totalCalories, totalProtein, totalSugar }}
               go={navigate}
+              openSettings={setSettingsFocus}
             />
           )}
 
@@ -192,6 +197,8 @@ export function AppShell({ user, onLogout }) {
         </main>
 
         <BottomNav route={route} setRoute={navigate} />
+
+        {settingsFocus && <Settings user={user} focus={settingsFocus} onClose={() => setSettingsFocus(null)} onLogout={onLogout} />}
       </div>
     </div>
   );

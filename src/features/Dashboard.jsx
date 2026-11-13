@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Utensils, Camera, Sparkles, CalendarDays, Smile, NotebookPen, ChevronRight } from "lucide-react";
+import { Utensils, Camera, Sparkles, CalendarDays, Smile, ChevronRight } from "lucide-react";
 import { Button, SoftCard, SectionTitle } from "../components/ui.jsx";
 import { todayISO, toLocalDate, toISODate } from "../lib/dates";
 import { moodOptions, initialLog, getOnThisDayMemories, getAllMemorySnaps, readHistorySources, buildDailyLogSummary } from "../lib/dailyLog";
@@ -8,8 +8,9 @@ import { classNames } from "../lib/utils";
 import { formatSleepDuration, shouldShowWakeConfirmation } from "../lib/sleep";
 import { SleepHealthKitCard, WakeConfirmationSheet } from "./Sleep.jsx";
 import { StoredImage } from "../components/StoredImage.jsx";
+import { Journal } from "./Journal.jsx";
 
-export function Dashboard({ log, setLog, totals, go }) {
+export function Dashboard({ log, setLog, totals, go, openSettings }) {
   const mood = moodOptions.find((m) => m.id === log.mood) || moodOptions[2];
   const progress = log.calorie_goal ? Math.min(100, Math.round((totals.totalCalories / log.calorie_goal) * 100)) : 0;
   const [showWakeSheet, setShowWakeSheet] = useState(() => shouldShowWakeConfirmation(log.sleep || initialLog.sleep));
@@ -73,10 +74,7 @@ export function Dashboard({ log, setLog, totals, go }) {
           <div className="grid grid-cols-5 gap-2">{moodOptions.map(m => <button key={m.id} aria-label={m.label} aria-pressed={log.mood === m.id} onClick={() => setLog((current) => ({ ...current, mood: current.mood === m.id ? "" : m.id }))} className={classNames("rounded-2xl py-3 text-2xl", log.mood === m.id ? "bg-[hsl(24_80%_58%)]" : "bg-zinc-100 dark:bg-zinc-800")}>{m.emoji}</button>)}</div>
         </SoftCard>
 
-        <SoftCard>
-          <SectionTitle icon={NotebookPen} title="Notes" />
-          <textarea value={log.notes || ""} placeholder="How was your day?" onChange={(e) => { const notes = e.target.value; setLog((current) => ({ ...current, notes })); }} className="w-full min-h-24 rounded-2xl bg-zinc-100 dark:bg-zinc-800 px-4 py-3 outline-none" />
-        </SoftCard>
+        <Journal log={log} setLog={setLog} onOpenReminders={openSettings ? () => openSettings("reminders") : undefined} />
 
         <SoftCard>
           <SectionTitle icon={Camera} title="Today's snaps" action={<Button variant="ghost" size="sm" onClick={() => go('/snaps')}>Open</Button>} />
