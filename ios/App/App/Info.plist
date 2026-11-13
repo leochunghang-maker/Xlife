@@ -32,6 +32,10 @@
 	<string>Xlife uses Face ID to lock your journal, health and couple data when you turn on App Lock.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Xlife uses your location to suggest nearby restaurants based on your cuisine preferences.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Xlife uses your location to suggest nearby restaurants.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
