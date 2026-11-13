@@ -9,6 +9,149 @@ export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey)
   : null;
 
+function createLocalUser({ id = crypto.randomUUID(), email, name }) {
+  return {
+    id,
+    name: name || email?.split("@")[0] || "Xlife user",
+    email,
+    avatar_url: "",
+    profile_photo_url: "",
+    relationship_mode: "Solo",
+    created_at: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function normalizeProfile(profile, authUser = {}) {
+  return {
+    id: profile?.id || authUser.id,
+    name: profile?.name || authUser.user_metadata?.name || authUser.email?.split("@")[0] || "Xlife user",
+    email: profile?.email || authUser.email || "",
+    avatar_url: profile?.avatar_url || "",
+    profile_photo_url: profile?.avatar_url || "",
+    relationship_mode: profile?.relationship_mode || "Solo",
+    created_at: profile?.created_at || authUser.created_at || new Date().toISOString(),
+    createdAt: profile?.created_at || authUser.created_at || new Date().toISOString(),
+  };
+}
+
+async function upsertProfile(profile) {
+  if (!supabase) return { data: profile, error: null, skipped: true };
+
+  // Supabase table: profiles { id uuid references auth.users(id), name, email, avatar_url, relationship_mode, created_at }
+  const { data, error } = await supabase
+    .from("profiles")
+    .upsert(profile, { onConflict: "id" })
+    .select()
+    .single();
+
+  return { data, error, skipped: false };
+}
+
+async function loadProfile(user) {
+  if (!supabase || !user?.id) return null;
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (error) return null;
+  return data;
+}
+
+export async function signUp(email, password, name) {
+  if (!isSupabaseConfigured || !supabase) {
+    const user = createLocalUser({ email, name });
+    localStorage.setItem("dayflow_user", JSON.stringify(user));
+    localStorage.setItem("dayflow_active_session", "true");
+    return { user, error: null, skipped: true };
+  }
+
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { data: { name } },
+  });
+
+  if (error) return { user: null, error, skipped: false };
+
+  const authUser = data.user;
+  const profile = {
+    id: authUser.id,
+    name,
+    email,
+    avatar_url: "",
+    relationship_mode: "Solo",
+    created_at: new Date().toISOString(),
+  };
+  const { data: savedProfile, error: profileError } = await upsertProfile(profile);
+
+  if (profileError) return { user: normalizeProfile(profile, authUser), error: profileError, skipped: false };
+  return { user: normalizeProfile(savedProfile, authUser), error: null, skipped: false };
+}
+
+export async function signIn(email, password) {
+  if (!isSupabaseConfigured || !supabase) {
+    const savedUser = JSON.parse(localStorage.getItem("dayflow_user") || "null");
+    if (!savedUser || savedUser.email?.toLowerCase() !== email.toLowerCase()) {
+      return { user: null, error: new Error("We could not find that email yet."), skipped: true };
+    }
+    localStorage.setItem("dayflow_active_session", "true");
+    return { user: savedUser, error: null, skipped: true };
+  }
+
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) return { user: null, error, skipped: false };
+
+  const profile = await loadProfile(data.user);
+  return { user: normalizeProfile(profile, data.user), error: null, skipped: false };
+}
+
+export async function signOut() {
+  if (isSupabaseConfigured && supabase) {
+    await supabase.auth.signOut();
+  }
+
+  localStorage.setItem("dayflow_active_session", "false");
+}
+
+export async function getCurrentUser() {
+  if (!isSupabaseConfigured || !supabase) {
+    const savedUser = JSON.parse(localStorage.getItem("dayflow_user") || "null");
+    const activeSession = localStorage.getItem("dayflow_active_session");
+    return savedUser && activeSession !== "false" ? savedUser : null;
+  }
+
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) return null;
+
+  const profile = await loadProfile(data.user);
+  return normalizeProfile(profile, data.user);
+}
+
+export async function saveUserProfile(profile) {
+  if (!isSupabaseConfigured || !supabase) {
+    const current = JSON.parse(localStorage.getItem("dayflow_user") || "null");
+    const nextUser = { ...current, ...profile };
+    localStorage.setItem("dayflow_user", JSON.stringify(nextUser));
+    return { data: nextUser, error: null, skipped: true };
+  }
+
+  return upsertProfile({
+    id: profile.id,
+    name: profile.name,
+    email: profile.email,
+    avatar_url: profile.avatar_url || "",
+    relationship_mode: profile.relationship_mode || "Solo",
+    created_at: profile.created_at || new Date().toISOString(),
+  });
+}
+
+// Next phase Supabase tables:
+// partner_connections, shared_memories, plans, daily_updates.
+
 async function cloudUpsert(tableName, row, conflictTarget = "id") {
   if (!supabase) return { data: null, error: null, skipped: true };
 

@@ -2,12 +2,55 @@
 @tailwind components;
 @tailwind utilities;
 
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+}
+
 body {
   font-family: Inter, sans-serif;
   margin: 0;
   background: hsl(30 30% 98%);
+  -webkit-text-size-adjust: 100%;
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top);
 }
 
 .field {
-  @apply w-full rounded-2xl bg-zinc-100 px-4 py-3 outline-none mb-2;
+  @apply mb-2 w-full rounded-2xl bg-zinc-100 px-4 py-3 text-zinc-900 caret-orange-500 outline-none placeholder:text-zinc-500 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder:text-zinc-400;
+}
+
+input,
+textarea,
+select {
+  color: rgb(24 24 27);
+  caret-color: hsl(24 80% 58%);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: rgb(113 113 122);
+}
+
+.dark input,
+.dark textarea,
+.dark select {
+  color: rgb(244 244 245) !important;
+  background-color: rgb(39 39 42) !important;
+  border-color: rgb(63 63 70) !important;
+  color-scheme: dark;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: rgb(161 161 170) !important;
 }

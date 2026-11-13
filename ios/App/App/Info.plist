@@ -24,6 +24,16 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Dayflow uses the camera so you can capture snaps, meals, memories, and spending moments.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Xlife uses your location to suggest nearby restaurants based on your cuisine preferences.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Xlife uses your location to suggest nearby restaurants.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Dayflow uses your photo library so you can choose existing photos for snaps.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Dayflow may save edited moments back to your photo library if you choose to export them later.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
+import { Geolocation } from "@capacitor/geolocation";
+import { getCurrentUser, saveUserProfile, signIn as signInWithSupabase, signOut as signOutWithSupabase, signUp as signUpWithSupabase } from "./lib/supabase";
 import {
   LayoutDashboard,
   Utensils,
-  Camera,
+  Camera as CameraIcon,
   Sparkles,
   HeartPulse,
   LogOut,
@@ -133,6 +136,28 @@ function createRestaurantRecord(restaurant) {
 }
 
 const cuisineCategories = ["Chinese", "Japanese", "Indian", "Western", "Vietnamese", "Thai", "Korean", "Italian"];
+
+const nearbyRestaurantSeeds = {
+  Chinese: ["Din Tai Fung", "Canton Kitchen", "Haidilao", "Local Noodle House", "Tai Er"],
+  Japanese: ["Sushi House", "Ramen Bar", "Ichiban Grill", "Tokyo Bowl"],
+  Korean: ["K-BBQ House", "Seoul Kitchen", "Bibimbap Lab"],
+  Thai: ["Thai Garden", "Bangkok Bowl", "Pad Thai House"],
+  Indian: ["Curry Palace", "Tandoori House", "Masala Kitchen"],
+  Western: ["Steak & Grill", "Burger Lab", "Brunch House"],
+  Vietnamese: ["Pho House", "Banh Mi Corner"],
+  Italian: ["Pasta Bar", "Napoli Pizza"],
+};
+
+const cuisineItemSeeds = {
+  Chinese: { name: "Lean beef noodle bowl", calories: 620, protein_g: 38, sugar_g: 8, cost: 14 },
+  Japanese: { name: "Salmon rice bowl", calories: 560, protein_g: 36, sugar_g: 7, cost: 16 },
+  Korean: { name: "Bibimbap bowl", calories: 590, protein_g: 32, sugar_g: 10, cost: 15 },
+  Thai: { name: "Thai basil rice", calories: 610, protein_g: 34, sugar_g: 11, cost: 13 },
+  Indian: { name: "Tandoori chicken bowl", calories: 640, protein_g: 42, sugar_g: 9, cost: 15 },
+  Western: { name: "Grilled chicken plate", calories: 680, protein_g: 45, sugar_g: 8, cost: 18 },
+  Vietnamese: { name: "Lemongrass noodle bowl", calories: 540, protein_g: 30, sugar_g: 9, cost: 12 },
+  Italian: { name: "Chicken pasta plate", calories: 700, protein_g: 37, sugar_g: 10, cost: 17 },
+};
 
 function normalizeText(value) {
   return String(value || "").trim().toLowerCase();
@@ -418,40 +443,47 @@ function Onboarding({ onAuthenticated }) {
   const [inviteCode, setInviteCode] = useState("");
   const [partnerCode, setPartnerCode] = useState("");
 
-  function createAccount() {
+  async function createAccount() {
     if (!createForm.name.trim() || !createForm.email.trim() || !createForm.password.trim()) {
       setAuthError("Add your name, email, and password to create your account.");
       return;
     }
 
-    const user = {
-      id: crypto.randomUUID(),
-      name: createForm.name.trim(),
-      email: createForm.email.trim(),
+    const { user, error } = await signUpWithSupabase(
+      createForm.email.trim(),
+      createForm.password,
+      createForm.name.trim()
+    );
+
+    if (error || !user) {
+      setAuthError(error?.message || "Could not create your account yet.");
+      return;
+    }
+
+    const nextUser = {
+      ...user,
       birthday: createForm.birthday,
       gender: createForm.gender,
-      profile_photo_url: "",
-      createdAt: new Date().toISOString(),
+      profile_photo_url: user.profile_photo_url || user.avatar_url || "",
     };
 
-    // Future Supabase Auth: replace this localStorage write with signUp() and a profiles insert.
-    localStorage.setItem("dayflow_user", JSON.stringify(user));
-    setCreatedUser(user);
+    localStorage.setItem("dayflow_user", JSON.stringify(nextUser));
+    setCreatedUser(nextUser);
     setAuthError("");
     setScreen("profile");
   }
 
-  function signIn() {
-    const savedUser = JSON.parse(localStorage.getItem("dayflow_user") || "null");
-    if (!savedUser || normalizeText(savedUser.email) !== normalizeText(signInForm.email)) {
-      setAuthError("We could not find that email yet. Create an account first or check the address.");
+  async function signIn() {
+    const { user, error } = await signInWithSupabase(signInForm.email.trim(), signInForm.password);
+    if (error || !user) {
+      setAuthError(error?.message || "We could not find that email yet. Create an account first or check the address.");
       return;
     }
 
-    // Future Supabase Auth: replace this mock session with signInWithPassword().
     localStorage.setItem("dayflow_active_session", "true");
+    localStorage.setItem("dayflow_user", JSON.stringify(user));
     setAuthError("");
-    onAuthenticated(savedUser);
+    onAuthenticated(user);
   }
 
   function toggleCuisine(cuisine) {
@@ -461,10 +493,24 @@ function Onboarding({ onAuthenticated }) {
     });
   }
 
-  function savePreferences() {
+  async function savePreferences() {
     const savedUser = createdUser || JSON.parse(localStorage.getItem("dayflow_user") || "null");
     if (!savedUser) return;
 
+    const nextUser = {
+      ...savedUser,
+      relationship_mode: preferences.relationship_mode,
+    };
+
+    await saveUserProfile({
+      id: nextUser.id,
+      name: nextUser.name,
+      email: nextUser.email,
+      avatar_url: nextUser.avatar_url || nextUser.profile_photo_url || "",
+      relationship_mode: preferences.relationship_mode,
+      created_at: nextUser.created_at || nextUser.createdAt || new Date().toISOString(),
+    });
+    localStorage.setItem("dayflow_user", JSON.stringify(nextUser));
     localStorage.setItem("dayflow_user_preferences", JSON.stringify({
       ...preferences,
       daily_calorie_goal: Number(preferences.daily_calorie_goal || 0),
@@ -477,7 +523,7 @@ function Onboarding({ onAuthenticated }) {
       return;
     }
 
-    onAuthenticated(savedUser);
+    onAuthenticated(nextUser);
   }
 
   function generateInviteCode() {
@@ -508,14 +554,14 @@ function Onboarding({ onAuthenticated }) {
   }
 
   return (
-    <div className="min-h-screen bg-[hsl(30_30%_98%)] px-4 py-6 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
+    <div className="safe-bottom safe-top min-h-screen overflow-x-hidden bg-[hsl(30_30%_98%)] px-4 py-6 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-2xl flex-col justify-center">
         <div className="rounded-[2rem] bg-white p-5 shadow-sm dark:bg-zinc-900">
           {screen === "welcome" && (
             <div className="space-y-5">
               <div className="rounded-[2rem] bg-gradient-to-br from-orange-100 via-white to-teal-50 p-5 dark:from-zinc-800 dark:via-zinc-900 dark:to-zinc-800">
                 <p className="text-xs font-black uppercase tracking-[0.28em] text-[hsl(24_80%_58%)]">welcome to</p>
-                <h1 className="mt-2 text-5xl font-black tracking-tight">Dayflow</h1>
+                <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-5xl">Dayflow</h1>
                 <p className="mt-3 text-base font-semibold text-zinc-600 dark:text-zinc-300">
                   Your daily life, health, memories, and relationship — all in one flow.
                 </p>
@@ -548,7 +594,7 @@ function Onboarding({ onAuthenticated }) {
           {screen === "create" && (
             <div className="space-y-3">
               <div>
-                <p className="text-3xl font-black">Create account</p>
+                <p className="text-2xl font-black sm:text-3xl">Create account</p>
                 <p className="mt-1 text-sm text-zinc-500">Start your personal Dayflow space.</p>
               </div>
               <div className="rounded-3xl bg-[hsl(30_30%_98%)] p-4 text-center text-sm font-semibold text-zinc-500 dark:bg-zinc-800">
@@ -578,7 +624,7 @@ function Onboarding({ onAuthenticated }) {
           {screen === "signin" && (
             <div className="space-y-3">
               <div>
-                <p className="text-3xl font-black">Welcome back</p>
+                <p className="text-2xl font-black sm:text-3xl">Welcome back</p>
                 <p className="mt-1 text-sm text-zinc-500">Sign in to your saved Dayflow profile.</p>
               </div>
               <input className="field" placeholder="Email" type="email" value={signInForm.email} onChange={(e) => setSignInForm({ ...signInForm, email: e.target.value })} />
@@ -596,7 +642,7 @@ function Onboarding({ onAuthenticated }) {
           {screen === "profile" && (
             <div className="space-y-3">
               <div>
-                <p className="text-3xl font-black">Set your flow</p>
+                <p className="text-2xl font-black sm:text-3xl">Set your flow</p>
                 <p className="mt-1 text-sm text-zinc-500">A few preferences make Dayflow feel more like you.</p>
               </div>
               <input className="field" placeholder="Daily calorie goal" type="number" value={preferences.daily_calorie_goal} onChange={(e) => setPreferences({ ...preferences, daily_calorie_goal: e.target.value })} />
@@ -649,7 +695,7 @@ function Onboarding({ onAuthenticated }) {
           {screen === "partner" && (
             <div className="space-y-4">
               <div>
-                <p className="text-3xl font-black">Connect with your partner</p>
+                <p className="text-2xl font-black sm:text-3xl">Connect with your partner</p>
                 <p className="mt-1 text-sm text-zinc-500">Pairing is mocked locally for now and ready for a shared backend later.</p>
               </div>
               <Button onClick={generateInviteCode} className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-4 text-white">
@@ -674,7 +720,7 @@ function Onboarding({ onAuthenticated }) {
 }
 
 function AppShell({ user, onLogout }) {
-  const [route, setRoute] = useState("/");
+  const [route, setRoute] = useState("/snaps");
   const [log, setLog] = useState(() => {
     const savedLog = localStorage.getItem("dayflow_log");
     return savedLog ? { ...initialLog, ...JSON.parse(savedLog) } : initialLog;
@@ -706,26 +752,32 @@ function AppShell({ user, onLogout }) {
     "/entertainment": "Fun",
     "/health": "Health",
   }[route];
+  const isSnapsRoute = route === "/snaps";
 
   return (
-    <div className="min-h-screen bg-[hsl(30_30%_98%)] text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50 font-sans">
-      <div className="mx-auto max-w-2xl min-h-screen pb-24">
-        <header className="sticky top-0 z-30 backdrop-blur-xl bg-[hsl(30_30%_98%)]/85 dark:bg-zinc-950/80 px-5 py-4 flex items-center justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.25em] text-zinc-400">
-              {user?.name ? `hi, ${user.name.split(" ")[0]}` : "personal lifestyle"}
-            </p>
-            <h1 className="text-2xl font-bold tracking-tight">
-              {pageTitle}
-            </h1>
-          </div>
+    <div className="min-h-screen overflow-x-hidden bg-[hsl(30_30%_98%)] text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50 font-sans">
+      <div className={classNames(
+        "mx-auto min-h-screen w-full max-w-2xl",
+        isSnapsRoute ? "overflow-hidden bg-black" : "pb-[calc(env(safe-area-inset-bottom)+6rem)]"
+      )}>
+        {!isSnapsRoute && (
+          <header className="safe-top sticky top-0 z-30 flex items-center justify-between bg-[hsl(30_30%_98%)]/85 px-5 pb-4 pt-4 backdrop-blur-xl dark:bg-zinc-950/80">
+            <div>
+              <p className="text-xs uppercase tracking-[0.25em] text-zinc-400">
+                {user?.name ? `hi, ${user.name.split(" ")[0]}` : "personal lifestyle"}
+              </p>
+              <h1 className="text-2xl font-bold tracking-tight">
+                {pageTitle}
+              </h1>
+            </div>
 
-          <Button variant="ghost" size="icon" className="rounded-2xl" onClick={onLogout}>
-            <LogOut className="h-5 w-5" />
-          </Button>
-        </header>
+            <Button variant="ghost" size="icon" className="rounded-2xl" onClick={onLogout}>
+              <LogOut className="h-5 w-5" />
+            </Button>
+          </header>
+        )}
 
-        <main className="px-4 space-y-4">
+        <main className={isSnapsRoute ? "h-[100dvh] overflow-hidden bg-black" : "space-y-4 px-4 pb-4"}>
           {route === "/" && (
             <Dashboard
               log={log}
@@ -753,14 +805,14 @@ function BottomNav({ route, setRoute }) {
   const items = [
     { label: "Home", path: "/", icon: LayoutDashboard },
     { label: "Meals", path: "/meals", icon: Utensils },
-    { label: "Snaps", path: "/snaps", icon: Camera },
+    { label: "Snaps", path: "/snaps", icon: CameraIcon },
     { label: "Fun", path: "/entertainment", icon: Sparkles },
     { label: "Health", path: "/health", icon: HeartPulse },
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 px-3 pb-3">
-      <div className="mx-auto max-w-2xl grid grid-cols-5 rounded-3xl border border-white/70 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl shadow-lg">
+    <div className="fixed bottom-0 left-0 right-0 z-50 box-border w-full px-3 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
+      <div className="mx-auto grid w-full max-w-2xl grid-cols-5 rounded-3xl border border-white/70 bg-white/80 shadow-lg backdrop-blur-xl dark:bg-zinc-900/80">
         {items.map(({ label, path, icon: Icon }) => {
           const active = route === path;
           return (
@@ -986,15 +1038,53 @@ function WorkoutTracker({ log, setLog }) {
 
 function Gym({ log, setLog }) {
   const [savedMessage, setSavedMessage] = useState("");
+  const [workoutCompleted, setWorkoutCompleted] = useState(false);
+  const [workoutSummary, setWorkoutSummary] = useState(null);
+
+  const encouragements = [
+    "Strong work — consistency builds the body you want.",
+    "You showed up today. That’s the win.",
+    "Great session. Your future self will thank you.",
+    "Another step stronger.",
+    "Discipline logged. Keep going.",
+  ];
 
   function doneWorkout() {
     const history = JSON.parse(localStorage.getItem("dayflow_workout_history") || "[]");
+    const exercises = log.workout?.exercises || {};
+    const completedExercises = Object.entries(exercises)
+      .filter(([, item]) => item?.done)
+      .map(([name, item]) => ({
+        name,
+        weight: Number(item.weight || 0),
+        reps: Number(item.reps || 0),
+        sets: Number(item.sets || 0),
+      }));
+
+    if (!completedExercises.length) {
+      setSavedMessage("Mark at least one exercise before finishing.");
+      return;
+    }
+
+    const totalSets = completedExercises.reduce((sum, item) => sum + Number(item.sets || 0), 0);
+    const totalVolume = completedExercises.reduce((sum, item) => sum + (Number(item.weight || 0) * Number(item.reps || 0)), 0);
+    const completedAt = new Date().toISOString();
+    const summary = {
+      type: log.workout?.type || "Workout",
+      completedCount: completedExercises.length,
+      completedExercises,
+      totalSets,
+      totalVolume,
+      completedAt,
+      message: encouragements[Math.floor(Math.random() * encouragements.length)],
+    };
 
     const newWorkout = {
       date: todayISO,
       type: log.workout?.type,
-      exercises: log.workout?.exercises || {},
-      savedAt: new Date().toISOString(),
+      exercises,
+      summary,
+      savedAt: completedAt,
     };
 
     localStorage.setItem(
@@ -1006,7 +1096,22 @@ function Gym({ log, setLog }) {
       JSON.stringify(newWorkout.exercises)
     );
 
+    setWorkoutSummary(summary);
+    setWorkoutCompleted(true);
     setSavedMessage("Workout saved. Next time you do this workout, your weight and reps will be remembered.");
+  }
+
+  function startAnotherWorkout() {
+    setWorkoutCompleted(false);
+    setWorkoutSummary(null);
+    setSavedMessage("");
+    setLog({
+      ...log,
+      workout: {
+        type: log.workout?.type || "Chest",
+        exercises: {},
+      },
+    });
   }
 
   return (
@@ -1015,17 +1120,75 @@ function Gym({ log, setLog }) {
       animate={{ opacity: 1, y: 0 }}
       className="space-y-4"
     >
-      <WorkoutTracker log={log} setLog={setLog} />
+      {workoutCompleted && workoutSummary ? (
+        <SoftCard>
+          <div className="rounded-3xl bg-[hsl(160_50%_45%)]/10 p-4">
+            <p className="text-2xl font-black">Workout Complete 💪</p>
+            <p className="mt-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">
+              {workoutSummary.message}
+            </p>
+          </div>
 
-      <Button
-        onClick={doneWorkout}
-        className="w-full rounded-2xl py-6 bg-[hsl(24_80%_58%)] text-white"
-      >
-        Done Workout
-      </Button>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="rounded-3xl bg-zinc-100 p-4 dark:bg-zinc-800">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-400">Type</p>
+              <p className="mt-1 font-black">{workoutSummary.type}</p>
+            </div>
+            <div className="rounded-3xl bg-zinc-100 p-4 dark:bg-zinc-800">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-400">Completed</p>
+              <p className="mt-1 font-black">{workoutSummary.completedCount} exercises</p>
+            </div>
+          </div>
+
+          <div className="mt-3 rounded-3xl bg-zinc-100 p-4 dark:bg-zinc-800">
+            <p className="font-bold">Logged exercises</p>
+            <div className="mt-2 space-y-2">
+              {workoutSummary.completedExercises.map((exercise) => (
+                <div key={exercise.name} className="flex items-center justify-between rounded-2xl bg-white p-3 text-sm dark:bg-zinc-900">
+                  <span className="font-semibold">{exercise.name}</span>
+                  <span className="text-zinc-500">
+                    {exercise.weight || 0} × {exercise.reps || 0}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-3 rounded-3xl bg-[hsl(24_80%_58%)]/10 p-4">
+            {workoutSummary.totalSets > 0 && (
+              <p className="text-sm font-bold text-zinc-600 dark:text-zinc-300">
+                Total sets: {workoutSummary.totalSets}
+              </p>
+            )}
+            {workoutSummary.totalVolume > 0 && (
+              <p className="text-sm font-bold text-zinc-600 dark:text-zinc-300">
+                Total volume: {workoutSummary.totalVolume.toLocaleString()}
+              </p>
+            )}
+            <p className="mt-1 text-xs text-zinc-500">
+              Completed {new Date(workoutSummary.completedAt).toLocaleString()}
+            </p>
+          </div>
+
+          <Button onClick={startAnotherWorkout} className="mt-4 w-full rounded-2xl bg-[hsl(24_80%_58%)] py-4 text-white">
+            Start another workout
+          </Button>
+        </SoftCard>
+      ) : (
+        <>
+          <WorkoutTracker log={log} setLog={setLog} />
+
+          <Button
+            onClick={doneWorkout}
+            className="w-full rounded-2xl py-6 bg-[hsl(24_80%_58%)] text-white"
+          >
+            Done Workout
+          </Button>
+        </>
+      )}
 
       {savedMessage && (
-        <div className="rounded-3xl bg-[hsl(160_50%_45%)]/10 p-4 text-sm text-zinc-700">
+        <div className="rounded-3xl bg-[hsl(160_50%_45%)]/10 p-4 text-sm font-semibold text-zinc-700 dark:text-zinc-200">
           {savedMessage}
         </div>
       )}
@@ -1277,7 +1440,7 @@ function WakeConfirmationSheet({ log, setLog, onClose }) {
   }
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-[60] px-3 pb-3">
+    <div className="fixed inset-x-0 bottom-0 z-[60] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
       <div className="mx-auto max-w-2xl rounded-t-[2rem] rounded-b-3xl bg-white p-5 shadow-2xl dark:bg-zinc-900">
         <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-zinc-200 dark:bg-zinc-700" />
         <p className="text-2xl font-bold">Are you awake?</p>
@@ -1366,7 +1529,7 @@ function Dashboard({ log, setLog, totals, go }) {
         </SoftCard>
 
         <SoftCard>
-          <SectionTitle icon={Camera} title="Today's snaps" action={<Button variant="ghost" size="sm" onClick={() => go('/snaps')}>Open</Button>} />
+          <SectionTitle icon={CameraIcon} title="Today's snaps" action={<Button variant="ghost" size="sm" onClick={() => go('/snaps')}>Open</Button>} />
           <div className="grid grid-cols-3 gap-2">{log.snaps.map((s, i) => <img key={i} src={s.url} className="aspect-square object-cover rounded-2xl" alt={s.caption} />)}</div>
         </SoftCard>
 
@@ -1589,8 +1752,12 @@ function Meals({ log, setLog }) {
   const [form, setForm] = useState({ type: "breakfast", name: "", calories: "", protein_g: "", sugar_g: "", rating: 5, cost: "" });
   const [suggestions, setSuggestions] = useState([]);
   const [catalogTab, setCatalogTab] = useState("browse");
-  const [restaurantSearch, setRestaurantSearch] = useState("");
+  const [userLocation, setUserLocation] = useState("");
+  const [geoLocation, setGeoLocation] = useState(null);
   const [selectedCuisine, setSelectedCuisine] = useState("");
+  const [nearbyResults, setNearbyResults] = useState([]);
+  const [isFindingRestaurants, setIsFindingRestaurants] = useState(false);
+  const [locationError, setLocationError] = useState("");
   const [suggestionRefreshSeed, setSuggestionRefreshSeed] = useState(0);
   const [rejectedFoodSuggestions, setRejectedFoodSuggestions] = useState(() => JSON.parse(localStorage.getItem("dayflow_rejected_food_suggestions") || "[]"));
   const [savedFoodSuggestions, setSavedFoodSuggestions] = useState(() => JSON.parse(localStorage.getItem("dayflow_saved_food_suggestions") || "[]"));
@@ -1634,7 +1801,7 @@ function Meals({ log, setLog }) {
   }, [savedFoodSuggestions]);
 
   const filteredRestaurants = useMemo(() => {
-    const query = restaurantSearch.trim().toLowerCase();
+    const query = userLocation.trim().toLowerCase();
     return restaurantCatalog.filter((restaurant) => {
       const cuisineMatch = !selectedCuisine || restaurant.cuisine.toLowerCase().includes(selectedCuisine.toLowerCase());
       const queryMatch = !query || [restaurant.name, restaurant.cuisine, restaurant.location]
@@ -1644,7 +1811,7 @@ function Meals({ log, setLog }) {
       const menuMatch = restaurant.menu_items.some((item) => item.name.toLowerCase().includes(query));
       return cuisineMatch && (queryMatch || menuMatch);
     });
-  }, [restaurantCatalog, restaurantSearch, selectedCuisine]);
+  }, [restaurantCatalog, userLocation, selectedCuisine]);
 
   const learningMeals = useMemo(() => [...mealHistory, ...(log.meals || [])], [log.meals, mealHistory]);
 
@@ -1748,6 +1915,116 @@ function Meals({ log, setLog }) {
       restaurant_name: restaurant.name || form.restaurant_name,
       photo_url: restaurant.photo_url || item.photo_url || form.photo_url,
     });
+  }
+
+  function buildNearbyResults(cuisine, locationLabel) {
+    const restaurants = nearbyRestaurantSeeds[cuisine] || nearbyRestaurantSeeds.Western;
+    const suggestedItem = cuisineItemSeeds[cuisine] || cuisineItemSeeds.Western;
+
+    // TODO: replace mock results with Google Places / Yelp Fusion API via backend.
+    return restaurants.map((name, index) => ({
+      id: `${normalizeText(cuisine)}-${normalizeText(name)}-${index}`,
+      name,
+      restaurant_name: name,
+      cuisine,
+      location: locationLabel,
+      distance: geoLocation ? `${(0.4 + index * 0.3).toFixed(1)} mi` : `${index + 1}.${index + 2} mi`,
+      rating: Number((4.8 - index * 0.13).toFixed(1)),
+      suggestedItem: {
+        ...suggestedItem,
+        id: crypto.randomUUID(),
+        rating: Number((4.7 - index * 0.1).toFixed(1)),
+      },
+      price: `$${Number(suggestedItem.cost || 0).toFixed(2)}`,
+      reason: `Suggested because you selected ${cuisine} near ${locationLabel}.`,
+    }));
+  }
+
+  async function findNearbyRestaurants(cuisine) {
+    const locationLabel = geoLocation ? "your current location" : userLocation.trim();
+    setLocationError("");
+
+    if (!geoLocation && !userLocation.trim()) {
+      setNearbyResults([]);
+      setLocationError("Enter a location or use your current location first.");
+      return;
+    }
+
+    setIsFindingRestaurants(true);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    setNearbyResults(buildNearbyResults(cuisine, locationLabel));
+    setIsFindingRestaurants(false);
+  }
+
+  function selectNearbyCuisine(cuisine) {
+    const nextCuisine = selectedCuisine === cuisine ? "" : cuisine;
+    setSelectedCuisine(nextCuisine);
+    if (nextCuisine) {
+      findNearbyRestaurants(nextCuisine);
+    } else {
+      setNearbyResults([]);
+    }
+  }
+
+  async function useMyLocation() {
+    setLocationError("");
+    setIsFindingRestaurants(true);
+
+    try {
+      const permission = await Geolocation.requestPermissions();
+
+      if (permission.location !== "granted") {
+        setLocationError("Location permission denied. Enable it in iPhone Settings.");
+        return;
+      }
+
+      const position = await Geolocation.getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 10000,
+      });
+
+      setGeoLocation({
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+      });
+      setUserLocation("Current location");
+      setLocationError("");
+    } catch {
+      setLocationError("Could not access your location. Please enable location permission in Settings.");
+    } finally {
+      setIsFindingRestaurants(false);
+    }
+  }
+
+  function addNearbyRestaurantToMeal(result) {
+    addMenuItemToMeal(result.suggestedItem, {
+      name: result.name,
+      cuisine: result.cuisine,
+      photo_url: "",
+    });
+  }
+
+  function saveNearbyRestaurant(result) {
+    const nextRestaurant = createRestaurantRecord({
+      name: result.name,
+      cuisine: result.cuisine,
+      location: result.location,
+      rating: result.rating,
+      notes: result.reason,
+      saved: true,
+      menu_items: [
+        {
+          ...result.suggestedItem,
+          saved: true,
+          notes: result.reason,
+        },
+      ],
+    });
+    setRestaurantCatalog([...restaurantCatalog, nextRestaurant]);
+  }
+
+  function rejectNearbyRestaurant(resultId) {
+    setNearbyResults(nearbyResults.filter((result) => result.id !== resultId));
   }
 
   function rejectCatalogSuggestion(suggestion) {
@@ -1909,19 +2186,42 @@ function Meals({ log, setLog }) {
         <div className="space-y-4">
           <div className="rounded-3xl bg-[hsl(30_30%_98%)] p-4 dark:bg-zinc-800">
             <p className="font-bold">Find nearby restaurants</p>
-            <input
-              className="field mt-3"
-              placeholder="Location, restaurant, or menu item"
-              value={restaurantSearch}
-              onChange={(e) => setRestaurantSearch(e.target.value)}
-            />
+            <div className="mt-3 grid gap-2">
+              <input
+                className="field mb-0"
+                placeholder="Enter city, area, or address"
+                value={userLocation}
+                onChange={(e) => {
+                  setUserLocation(e.target.value);
+                  setGeoLocation(null);
+                  setLocationError("");
+                  setNearbyResults([]);
+                }}
+              />
+              <Button
+                variant="secondary"
+                onClick={useMyLocation}
+                className="rounded-2xl py-3 text-sm"
+                disabled={isFindingRestaurants}
+              >
+                Use My Location
+              </Button>
+            </div>
+            {geoLocation && (
+              <p className="mt-2 rounded-2xl bg-[hsl(160_50%_45%)]/10 p-3 text-sm font-bold text-[hsl(160_50%_45%)]">
+                Using current location
+              </p>
+            )}
+            {locationError && (
+              <p className="mt-2 rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-600 dark:bg-rose-950/30 dark:text-rose-200">
+                {locationError}
+              </p>
+            )}
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {cuisineCategories.map((cuisine) => (
                 <button
                   key={cuisine}
-                  onClick={() => {
-                    setSelectedCuisine(selectedCuisine === cuisine ? "" : cuisine);
-                  }}
+                  onClick={() => selectNearbyCuisine(cuisine)}
                   className={classNames(
                     "rounded-2xl px-3 py-3 text-sm font-bold transition",
                     selectedCuisine === cuisine
@@ -1933,7 +2233,55 @@ function Meals({ log, setLog }) {
                 </button>
               ))}
             </div>
+            {isFindingRestaurants && (
+              <p className="mt-3 rounded-2xl bg-white p-3 text-sm font-bold text-zinc-500 dark:bg-zinc-900">
+                Finding nearby {selectedCuisine || "restaurants"}...
+              </p>
+            )}
           </div>
+
+          {nearbyResults.length > 0 && (
+            <div className="space-y-3">
+              {nearbyResults.map((result) => (
+                <div key={result.id} className="rounded-3xl bg-white p-4 shadow-sm dark:bg-zinc-900">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-lg font-black">{result.name}</p>
+                      <p className="text-sm text-zinc-500">
+                        {result.cuisine} · {result.location} · {result.distance}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-[hsl(160_50%_45%)]/10 px-3 py-1 text-xs font-bold text-[hsl(160_50%_45%)]">
+                      {result.rating} stars
+                    </span>
+                  </div>
+
+                  <div className="mt-3 rounded-3xl bg-[hsl(30_30%_98%)] p-3 dark:bg-zinc-800">
+                    <p className="font-bold">{result.suggestedItem.name}</p>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      {result.suggestedItem.calories} kcal · {result.suggestedItem.protein_g}g protein · {result.suggestedItem.sugar_g}g sugar · {result.price}
+                    </p>
+                  </div>
+
+                  <p className="mt-3 rounded-3xl bg-[hsl(160_50%_45%)]/10 p-3 text-sm text-zinc-600 dark:text-zinc-300">
+                    {result.reason}
+                  </p>
+
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <Button onClick={() => addNearbyRestaurantToMeal(result)} className="rounded-2xl bg-[hsl(24_80%_58%)] px-2 text-xs text-white">
+                      Add to Meal
+                    </Button>
+                    <Button onClick={() => saveNearbyRestaurant(result)} className="rounded-2xl bg-[hsl(160_50%_45%)] px-2 text-xs text-white">
+                      Save Restaurant
+                    </Button>
+                    <Button variant="secondary" onClick={() => rejectNearbyRestaurant(result.id)} className="rounded-2xl px-2 text-xs">
+                      Reject
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="rounded-3xl bg-white p-4 shadow-sm dark:bg-zinc-900">
             <div className="mb-3 flex items-center justify-between gap-3">
@@ -2127,10 +2475,12 @@ function Meals({ log, setLog }) {
 }
 
 function Snaps({ log, setLog }) {
-  const [preview, setPreview] = useState("");
+  const [snapStep, setSnapStep] = useState("camera");
+  const [capturedImage, setCapturedImage] = useState(null);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState("");
   const [caption, setCaption] = useState("");
-  const [cameraFacing, setCameraFacing] = useState("rear");
-  const [captureMode, setCaptureMode] = useState("memory");
   const [foodForm, setFoodForm] = useState({
     meal_type: "lunch",
     name: "",
@@ -2141,6 +2491,9 @@ function Snaps({ log, setLog }) {
     rating: 0,
     notes: "",
   });
+  const [foodEstimate, setFoodEstimate] = useState(null);
+  const [isEstimatingFood, setIsEstimatingFood] = useState(false);
+  const [foodEstimateError, setFoodEstimateError] = useState("");
   const [spendingForm, setSpendingForm] = useState({
     item_name: "",
     amount: "",
@@ -2150,7 +2503,6 @@ function Snaps({ log, setLog }) {
   });
   const [spendingSavedMessage, setSpendingSavedMessage] = useState("");
   const [spendingRecords, setSpendingRecords] = useState(() => JSON.parse(localStorage.getItem("dayflow_spending") || "[]"));
-  const todaySnaps = log.snaps.filter((snap) => (!snap.date || snap.date === todayISO) && (!snap.type || snap.type === "memory"));
   const todaySpendingTotal = spendingRecords
     .filter((record) => record.date === todayISO)
     .reduce((sum, record) => sum + Number(record.amount || 0), 0);
@@ -2159,48 +2511,117 @@ function Snaps({ log, setLog }) {
     localStorage.setItem("dayflow_spending", JSON.stringify(spendingRecords));
   }, [spendingRecords]);
 
-  function captureSnap() {
-    const captured = cameraFacing === "rear"
-      ? "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=900&auto=format&fit=crop"
-      : "https://images.unsplash.com/photo-1519741497674-611481863552?q=80&w=900&auto=format&fit=crop";
-    setPreview(captured);
-    resetCaptureForms();
-  }
+  useEffect(() => {
+    // The Snaps camera shell marks native camera UI readiness once after mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCameraReady(true);
+  }, []);
 
-  function handleFileUpload(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPreview(String(reader.result));
-      resetCaptureForms();
-    };
-    reader.readAsDataURL(file);
-    event.target.value = "";
-  }
-
-  function resetCaptureForms() {
+  function resetSnapForms() {
+    setCameraError("");
     setCaption("");
-    setCaptureMode("memory");
     setFoodForm({ meal_type: "lunch", name: "", calories: "", protein_g: "", sugar_g: "", cost: "", rating: 0, notes: "" });
+    setFoodEstimate(null);
+    setIsEstimatingFood(false);
+    setFoodEstimateError("");
     setSpendingForm({ item_name: "", amount: "", category: "Food", merchant: "", notes: "" });
     setSpendingSavedMessage("");
   }
 
+  function isCameraCancel(error) {
+    return /cancel|cancelled|canceled|no image/i.test(String(error?.message || error || ""));
+  }
+
+  async function takePhoto() {
+    if (isCapturing) return;
+
+    setIsCapturing(true);
+    setCameraError("");
+
+    try {
+      const photo = await Camera.getPhoto({
+        quality: 90,
+        allowEditing: false,
+        resultType: CameraResultType.DataUrl,
+        source: CameraSource.Camera,
+      });
+
+      const imageUrl = photo?.dataUrl || photo?.webPath;
+
+      if (!imageUrl) {
+        setCameraError("No image was returned from the camera.");
+        return;
+      }
+
+      console.log("Captured image:", imageUrl);
+      resetSnapForms();
+      setCapturedImage(imageUrl);
+      requestAnimationFrame(() => {
+        setSnapStep("review");
+        console.log("Snap mode:", "review");
+      });
+    } catch (error) {
+      if (isCameraCancel(error)) return;
+      setCameraError("Camera did not finish capturing. Please try again.");
+    } finally {
+      setIsCapturing(false);
+    }
+  }
+
+  async function enableCamera() {
+    await takePhoto();
+  }
+
+  async function pickFromGallery() {
+    if (isCapturing) return;
+    setIsCapturing(true);
+    setCameraError("");
+
+    try {
+      const photo = await Camera.getPhoto({
+        quality: 90,
+        allowEditing: false,
+        resultType: CameraResultType.DataUrl,
+        source: CameraSource.Photos,
+      });
+
+      const imageUrl = photo?.dataUrl || photo?.webPath;
+
+      if (!imageUrl) {
+        setCameraError("No image was returned from the camera.");
+        return;
+      }
+
+      console.log("Captured image:", imageUrl);
+      resetSnapForms();
+      setCapturedImage(imageUrl);
+      requestAnimationFrame(() => {
+        setSnapStep("review");
+        console.log("Snap mode:", "review");
+      });
+    } catch (error) {
+      if (isCameraCancel(error)) return;
+      setCameraError("Camera did not finish capturing. Please try again.");
+    } finally {
+      setIsCapturing(false);
+    }
+  }
+
   function clearCapture() {
-    setPreview("");
-    resetCaptureForms();
+    setCapturedImage(null);
+    setSnapStep("camera");
+    resetSnapForms();
   }
 
   function saveMemory() {
-    if (!preview) return;
+    const imageUrl = capturedImage;
+    if (!imageUrl) return;
     setLog({
       ...log,
       snaps: [
         ...log.snaps,
         {
-          url: preview,
+          url: imageUrl,
           caption: caption || "A Dayflow moment",
           date: todayISO,
           taken_at: new Date().toISOString(),
@@ -2211,47 +2632,64 @@ function Snaps({ log, setLog }) {
     clearCapture();
   }
 
-  function estimateFoodFromPhoto() {
+  async function estimateFoodFromImage(imageDataUrl) {
+    // TODO: send imageDataUrl to a secure backend or Supabase Edge Function.
+    // OpenAI Vision should be called server-side only; never put an OpenAI API key in this frontend.
+    if (!imageDataUrl) {
+      setFoodEstimateError("Please take or upload a food photo first.");
+      return null;
+    }
+
+    setIsEstimatingFood(true);
+    setFoodEstimateError("");
+
+    await new Promise((resolve) => setTimeout(resolve, 650));
+
     const estimate = {
+      image_url: imageDataUrl,
       name: "Grilled chicken rice bowl",
       calories: 560,
       protein_g: 42,
       sugar_g: 8,
+      confidence: 0.82,
+      estimatedAt: new Date().toISOString(),
     };
+
+    setFoodEstimate(estimate);
     setFoodForm({ ...foodForm, ...estimate });
+    setIsEstimatingFood(false);
     return estimate;
   }
 
   function selectCaptureMode(mode) {
-    setCaptureMode(mode);
-    if (mode === "food" && !foodForm.name) {
-      setFoodForm({
-        ...foodForm,
-        name: "Grilled chicken rice bowl",
-        calories: 560,
-        protein_g: 42,
-        sugar_g: 8,
-      });
-    }
+    setSnapStep(mode);
   }
 
   function saveFoodMeal() {
-    if (!preview) return;
-    const estimate = foodForm.name
-      ? foodForm
-      : { ...foodForm, name: "Grilled chicken rice bowl", calories: 560, protein_g: 42, sugar_g: 8 };
+    const imageUrl = capturedImage;
+    if (!imageUrl) return;
+    const estimate = foodEstimate || {
+      image_url: imageUrl,
+      name: foodForm.name || "Food from snap",
+      calories: Number(foodForm.calories || 0),
+      protein_g: Number(foodForm.protein_g || 0),
+      sugar_g: Number(foodForm.sugar_g || 0),
+      confidence: 0,
+      estimatedAt: new Date().toISOString(),
+    };
     const nextMeal = {
       type: "food",
-      image_url: preview,
-      photo_url: preview,
-      meal_type: estimate.meal_type,
+      image_url: imageUrl,
+      photo_url: imageUrl,
+      meal_type: foodForm.meal_type,
       name: estimate.name,
       calories: Number(estimate.calories || 0),
       protein_g: Number(estimate.protein_g || 0),
       sugar_g: Number(estimate.sugar_g || 0),
-      cost: Number(estimate.cost || 0),
-      rating: Number(estimate.rating || 1),
-      notes: estimate.notes,
+      cost: Number(foodForm.cost || 0),
+      rating: Number(foodForm.rating || 1),
+      notes: foodForm.notes,
+      ai_estimate: estimate,
       time: new Date().toTimeString().slice(0, 5),
     };
     const history = JSON.parse(localStorage.getItem("dayflow_meal_history") || "[]");
@@ -2262,11 +2700,12 @@ function Snaps({ log, setLog }) {
   }
 
   function saveSpending() {
-    if (!preview || !spendingForm.item_name.trim() || !spendingForm.amount) return;
+    const imageUrl = capturedImage;
+    if (!imageUrl || !spendingForm.item_name.trim() || !spendingForm.amount) return;
     const nextSpending = {
       id: crypto.randomUUID(),
       date: todayISO,
-      image_url: preview,
+      image_url: imageUrl,
       item_name: spendingForm.item_name,
       amount: Number(spendingForm.amount || 0),
       category: spendingForm.category,
@@ -2283,66 +2722,53 @@ function Snaps({ log, setLog }) {
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className="-mx-4 -mt-2 min-h-[calc(100vh-8.5rem)] bg-zinc-950 px-4 pb-6 pt-4 text-white"
+      className="relative h-[100dvh] overflow-hidden bg-black text-white"
     >
-      <div className="mx-auto flex min-h-[calc(100vh-10rem)] max-w-md flex-col justify-between">
-        <div className="flex items-center justify-between">
-          <div className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold backdrop-blur-xl">
-            🔥 {todaySnaps.length} snaps today
-          </div>
-          <button
-            onClick={() => setCameraFacing(cameraFacing === "rear" ? "front" : "rear")}
-            className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold backdrop-blur-xl transition hover:bg-white/20"
-          >
-            {cameraFacing === "rear" ? "Rear" : "Front"}
-          </button>
-        </div>
-
-        <div className="relative my-5 overflow-hidden rounded-[2rem] bg-black shadow-2xl ring-1 ring-white/10">
-          <div className="aspect-[9/14] w-full">
-            {preview ? (
-              <img src={preview} alt="Snap preview" className="h-full w-full object-cover" />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center bg-gradient-to-b from-zinc-900 via-zinc-950 to-black px-8 text-center">
-                <div className="mb-4 rounded-full bg-white/10 p-5">
-                  <Camera className="h-10 w-10 text-white" />
-                </div>
-                <p className="text-lg font-bold">Ready for a snap</p>
-                <p className="mt-2 text-sm text-zinc-400">
-                  Capture a moment or upload from your gallery.
-                </p>
-              </div>
-            )}
-          </div>
+      <div className="relative mx-auto h-full max-w-2xl overflow-hidden bg-black pb-[calc(env(safe-area-inset-bottom)+6rem)]">
+        <div className="absolute inset-0 overflow-hidden bg-black">
+          {snapStep !== "camera" && capturedImage && (
+            <img src={capturedImage} alt="Snap preview" className="absolute inset-0 h-full w-full object-cover" />
+          )}
 
           <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/45 to-transparent" />
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black/65 to-transparent" />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/75 to-transparent" />
+
+          {snapStep === "camera" && cameraError && (
+            <div className="absolute inset-x-5 top-1/2 -translate-y-1/2 rounded-3xl bg-black/70 p-4 text-center backdrop-blur-xl">
+              <p className="text-sm font-bold">Enable camera access</p>
+              <Button onClick={enableCamera} className="mt-3 rounded-2xl bg-[hsl(24_80%_58%)] px-5 py-3 text-white">
+                Enable Camera
+              </Button>
+            </div>
+          )}
+
+          {snapStep === "review" && capturedImage && (
+            <div className="absolute inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+6.25rem)] space-y-3">
+              <div className="grid grid-cols-1 gap-2">
+                {[
+                  { id: "memory", label: "Save Memory", color: "bg-[hsl(24_80%_58%)]" },
+                  { id: "food", label: "Mark Food", color: "bg-[hsl(160_50%_45%)]" },
+                  { id: "spending", label: "Track Spending", color: "bg-purple-500" },
+                ].map((option) => (
+                  <button
+                    key={option.id}
+                    onClick={() => selectCaptureMode(option.id)}
+                    className={classNames("rounded-3xl px-5 py-4 text-sm font-black text-white shadow-lg transition", option.color)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <button onClick={clearCapture} className="w-full rounded-3xl bg-black/55 px-5 py-3 text-sm font-bold text-white backdrop-blur-xl">
+                Retake
+              </button>
+            </div>
+          )}
         </div>
 
-        {preview ? (
-          <div className="space-y-3 rounded-[2rem] bg-white p-4 text-zinc-900 shadow-2xl dark:bg-zinc-900 dark:text-white">
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { id: "memory", label: "Save Memory", color: "bg-[hsl(24_80%_58%)]" },
-                { id: "food", label: "Mark Food", color: "bg-[hsl(160_50%_45%)]" },
-                { id: "spending", label: "Track Spending", color: "bg-purple-500" },
-              ].map((option) => (
-                <button
-                  key={option.id}
-                  onClick={() => selectCaptureMode(option.id)}
-                  className={classNames(
-                    "rounded-3xl px-2 py-3 text-xs font-bold transition",
-                    captureMode === option.id
-                      ? `${option.color} text-white shadow-sm`
-                      : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800"
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-
-            {captureMode === "memory" && (
+        {snapStep !== "camera" && snapStep !== "review" && capturedImage ? (
+          <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.75rem)] max-h-[72dvh] overflow-y-auto rounded-t-[2rem] bg-white p-4 text-zinc-900 shadow-2xl dark:bg-zinc-900 dark:text-white">
+            {snapStep === "memory" && (
               <div className="space-y-3">
                 <input
                   value={caption}
@@ -2356,18 +2782,32 @@ function Snaps({ log, setLog }) {
               </div>
             )}
 
-            {captureMode === "food" && (
+            {snapStep === "food" && (
               <div className="space-y-3">
                 <select className="field" value={foodForm.meal_type} onChange={(e) => setFoodForm({ ...foodForm, meal_type: e.target.value })}>
                   {["breakfast", "lunch", "dinner", "snack"].map((type) => <option key={type} value={type}>{type}</option>)}
                 </select>
 
-                {foodForm.name && (
+                {foodEstimateError && (
+                  <p className="rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-600 dark:bg-rose-950/30 dark:text-rose-200">
+                    {foodEstimateError}
+                  </p>
+                )}
+
+                {foodEstimate && (
                   <div className="rounded-3xl bg-[hsl(160_50%_45%)]/10 p-3 text-sm text-zinc-700 dark:text-zinc-200">
-                    <p className="font-bold text-[hsl(160_50%_45%)]">AI Estimate Food: {foodForm.name}</p>
-                    <p>Calories: {foodForm.calories}</p>
-                    <p>Protein: {foodForm.protein_g}g</p>
-                    <p>Sugar: {foodForm.sugar_g}g</p>
+                    <img src={foodEstimate.image_url} alt="Food estimate preview" className="mb-3 h-32 w-full rounded-3xl object-cover" />
+                    <p className="text-xs font-black uppercase tracking-[0.16em] text-[hsl(160_50%_45%)]">
+                      AI analyzed this photo
+                    </p>
+                    <p className="mt-2 font-bold text-[hsl(160_50%_45%)]">Detected food: {foodEstimate.name}</p>
+                    <p>Estimated calories: {foodEstimate.calories}</p>
+                    <p>Protein: {foodEstimate.protein_g}g</p>
+                    <p>Sugar: {foodEstimate.sugar_g}g</p>
+                    <p>Confidence: {Math.round(Number(foodEstimate.confidence || 0) * 100)}%</p>
+                    <p className="mt-2 rounded-2xl bg-white/70 p-2 text-xs font-semibold text-zinc-500 dark:bg-zinc-900/70">
+                      AI estimate — verify if needed
+                    </p>
                   </div>
                 )}
 
@@ -2394,13 +2834,20 @@ function Snaps({ log, setLog }) {
 
                 <textarea className="min-h-20 w-full rounded-2xl bg-zinc-100 px-4 py-3 outline-none dark:bg-zinc-800" placeholder="Notes" value={foodForm.notes} onChange={(e) => setFoodForm({ ...foodForm, notes: e.target.value })} />
                 <div className="grid grid-cols-2 gap-2">
-                  <Button variant="secondary" onClick={estimateFoodFromPhoto} className="rounded-2xl py-3">Estimate calories</Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => estimateFoodFromImage(capturedImage)}
+                    className="rounded-2xl py-3"
+                    disabled={isEstimatingFood}
+                  >
+                    {isEstimatingFood ? "Analyzing food photo…" : "Estimate calories"}
+                  </Button>
                   <Button onClick={saveFoodMeal} className="rounded-2xl bg-[hsl(24_80%_58%)] py-3 text-white">Save meal</Button>
                 </div>
               </div>
             )}
 
-            {captureMode === "spending" && (
+            {snapStep === "spending" && (
               <div className="space-y-2">
                 <input className="field" placeholder="Item / what I bought" value={spendingForm.item_name} onChange={(e) => setSpendingForm({ ...spendingForm, item_name: e.target.value })} />
                 <div className="grid grid-cols-2 gap-2">
@@ -2424,25 +2871,28 @@ function Snaps({ log, setLog }) {
             </button>
           </div>
         ) : (
-          <div className="relative flex items-center justify-center pb-2">
-            <label className="absolute left-2 flex h-14 w-14 cursor-pointer items-center justify-center rounded-2xl bg-white/10 backdrop-blur-xl transition hover:bg-white/20">
-              <ImagePlus className="h-6 w-6" />
-              <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
-            </label>
-
+          snapStep === "camera" && (
+          <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.25rem)] flex items-center justify-center px-4">
             <button
-              onClick={captureSnap}
-              className="h-20 w-20 rounded-full border-4 border-white bg-white shadow-[0_0_0_8px_rgba(255,255,255,0.16)] transition active:scale-95"
-              aria-label="Capture snap"
-            />
-
-            <button
-              onClick={() => setCameraFacing(cameraFacing === "rear" ? "front" : "rear")}
-              className="absolute right-2 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 text-xs font-bold backdrop-blur-xl transition hover:bg-white/20"
+              onClick={pickFromGallery}
+              className="absolute left-2 flex h-14 w-14 cursor-pointer items-center justify-center rounded-2xl bg-white/10 backdrop-blur-xl transition hover:bg-white/20"
+              aria-label="Pick from gallery"
             >
-              Flip
+              <ImagePlus className="h-6 w-6" />
             </button>
+
+            <button
+              onClick={takePhoto}
+              className={classNames(
+                "h-20 w-20 rounded-full border-4 border-white bg-white shadow-[0_0_0_8px_rgba(255,255,255,0.16)] transition active:scale-95",
+                isCapturing ? "opacity-60" : ""
+              )}
+              aria-label="Capture snap"
+              aria-busy={!cameraReady || isCapturing}
+              disabled={isCapturing}
+            />
           </div>
+          )
         )}
       </div>
     </motion.div>
@@ -2701,7 +3151,7 @@ function CycleTracker() {
     <div className="space-y-4">
       <SoftCard>
         <div className="mb-5">
-          <p className="text-3xl font-black tracking-tight">{selectedDateTitle}</p>
+          <p className="text-2xl font-black tracking-tight sm:text-3xl">{selectedDateTitle}</p>
           <p className="mt-1 text-sm font-semibold capitalize text-zinc-500">
             Cycle Day {selectedPhase.day} · {selectedPhase.phase}
           </p>
@@ -3036,6 +3486,18 @@ const planInspirationIdeas = [
   },
 ];
 
+function readPartnerConnection() {
+  try {
+    return JSON.parse(localStorage.getItem("xlife_partner_connection") || "null");
+  } catch {
+    return null;
+  }
+}
+
+function generatePartnerInviteCode() {
+  return `XLIFE-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
 function createBlankChoiceBlock(question = "") {
   return {
     id: crypto.randomUUID(),
@@ -3077,7 +3539,9 @@ function Entertainment({ log, setLog }) {
 
   const [entertainmentCategory, setEntertainmentCategory] = useState("Movies");
   const [usTab, setUsTab] = useState("updates");
-  const [connectedPartner, setConnectedPartner] = useState(null);
+  const [partnerConnection, setPartnerConnection] = useState(() => readPartnerConnection());
+  const [partnerCodeInput, setPartnerCodeInput] = useState("");
+  const [partnerMessage, setPartnerMessage] = useState("");
   const [planForm, setPlanForm] = useState({
     title: "",
     content: "",
@@ -3093,6 +3557,9 @@ function Entertainment({ log, setLog }) {
     { label: "Music", icon: "🎵" },
   ];
   const memorySnaps = log.snaps.filter((snap) => !snap.type || snap.type === "memory");
+  const connectedPartner = partnerConnection?.status === "connected"
+    ? { name: partnerConnection.partnerName || "Partner", email: partnerConnection.partnerEmail }
+    : null;
   const partnerUpdates = [
     { type: "wake", text: `Wake-up time logged at ${log.wake_up_time || "7:30"} ☀️` },
     { type: "meal", text: log.meals[0]?.name ? `Logged ${log.meals[0].name} for ${log.meals[0].type || "a meal"} 🍜` : "Logged ramen for lunch 🍜" },
@@ -3107,6 +3574,86 @@ function Entertainment({ log, setLog }) {
   useEffect(() => {
     localStorage.setItem("dayflow_fun_plans", JSON.stringify(plans));
   }, [plans]);
+
+  function savePartnerConnection(connection) {
+    setPartnerConnection(connection);
+    localStorage.setItem("xlife_partner_connection", JSON.stringify(connection));
+  }
+
+  function invitePartner() {
+    const user = JSON.parse(localStorage.getItem("dayflow_user") || "null");
+    const now = new Date().toISOString();
+    const connection = {
+      id: crypto.randomUUID(),
+      ownerUserId: user?.id || "local-user",
+      inviteCode: generatePartnerInviteCode(),
+      partnerName: null,
+      partnerEmail: null,
+      status: "invite_created",
+      createdAt: now,
+      connectedAt: null,
+    };
+
+    // Future Supabase: replace this local mock object with a partner_connections row.
+    savePartnerConnection(connection);
+    setPartnerMessage("");
+  }
+
+  async function copyPartnerCode() {
+    const code = partnerConnection?.inviteCode;
+    if (!code) return;
+
+    await navigator.clipboard?.writeText(code);
+    setPartnerMessage("Invite code copied");
+  }
+
+  async function sharePartnerInvite() {
+    const code = partnerConnection?.inviteCode;
+    if (!code) return;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "Join me on Xlife",
+          text: `Use my Xlife invite code: ${code}`,
+        });
+        return;
+      } catch {
+        // Fall back to copy if sharing is cancelled or unavailable.
+      }
+    }
+
+    await copyPartnerCode();
+  }
+
+  function connectWithPartnerCode() {
+    const code = partnerCodeInput.trim();
+    if (!code) return;
+    const user = JSON.parse(localStorage.getItem("dayflow_user") || "null");
+    const now = new Date().toISOString();
+    const connection = {
+      id: partnerConnection?.id || crypto.randomUUID(),
+      ownerUserId: partnerConnection?.ownerUserId || user?.id || "local-user",
+      inviteCode: code,
+      partnerName: "Partner",
+      partnerEmail: null,
+      status: "connected",
+      createdAt: partnerConnection?.createdAt || now,
+      connectedAt: now,
+    };
+
+    // Future Supabase: validate inviteCode against partner_connections before connecting.
+    savePartnerConnection(connection);
+    setPartnerCodeInput("");
+    setPartnerMessage("Partner connected");
+  }
+
+  function disconnectPartner() {
+    localStorage.removeItem("xlife_partner_connection");
+    setPartnerConnection(null);
+    setPartnerCodeInput("");
+    setPartnerMessage("");
+  }
 
   function resetPlanForm() {
     setPlanForm({
@@ -3254,20 +3801,83 @@ function Entertainment({ log, setLog }) {
           <p id="g9lh0k" className="mt-1 text-sm text-zinc-500">Stay connected through daily moments.</p>
         </div>
 
-        {!connectedPartner && (
-          <div className="mb-4 rounded-3xl bg-gradient-to-br from-orange-50 to-rose-50 p-4 shadow-sm dark:from-zinc-800 dark:to-zinc-900">
-            <p id="tbmjlwm" className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">
-              Connect with your partner to share updates, plans, and memories.
+        <div className="mb-4 rounded-3xl bg-gradient-to-br from-orange-50 to-rose-50 p-4 shadow-sm dark:from-zinc-800 dark:to-zinc-900">
+          {partnerConnection?.status === "connected" ? (
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-black">Connected with {partnerConnection.partnerName || "Partner"}</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Connected {partnerConnection.connectedAt ? new Date(partnerConnection.connectedAt).toLocaleString() : "locally"}
+                  </p>
+                </div>
+                <span className="rounded-full bg-[hsl(160_50%_45%)]/10 px-3 py-1 text-xs font-bold text-[hsl(160_50%_45%)]">
+                  Connected
+                </span>
+              </div>
+              <Button variant="secondary" onClick={disconnectPartner} className="w-full rounded-2xl py-3 text-sm">
+                Disconnect Partner
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <p className="font-black">Connect with your partner</p>
+                <p id="tbmjlwm" className="mt-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">
+                  Share updates, plans, and memories together.
+                </p>
+              </div>
+
+              {partnerConnection?.status === "invite_created" ? (
+                <div className="space-y-3">
+                  <div className="rounded-3xl bg-white p-4 text-center shadow-sm dark:bg-zinc-900">
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-zinc-400">Invite code</p>
+                    <p className="mt-1 text-2xl font-black tracking-wide">{partnerConnection.inviteCode}</p>
+                    <p className="mt-1 text-xs font-semibold text-zinc-500">Waiting for partner...</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button variant="secondary" onClick={copyPartnerCode} className="rounded-2xl py-3 text-sm">
+                      Copy Code
+                    </Button>
+                    <Button onClick={sharePartnerInvite} className="rounded-2xl bg-[hsl(160_50%_45%)] py-3 text-sm text-white">
+                      Share Invite
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  id="0frvww"
+                  onClick={invitePartner}
+                  className="w-full rounded-2xl bg-[hsl(24_80%_58%)] py-3 text-white"
+                >
+                  Invite Partner
+                </Button>
+              )}
+
+              <div className="grid gap-2">
+                <input
+                  className="field mb-0"
+                  placeholder="Enter Partner Code"
+                  value={partnerCodeInput}
+                  onChange={(e) => setPartnerCodeInput(e.target.value)}
+                />
+                <Button onClick={connectWithPartnerCode} className="rounded-2xl bg-[hsl(24_80%_58%)] py-3 text-white">
+                  Connect
+                </Button>
+              </div>
+              {partnerConnection && (
+                <Button variant="secondary" onClick={disconnectPartner} className="w-full rounded-2xl py-3 text-sm">
+                  Disconnect Partner
+                </Button>
+              )}
+            </div>
+          )}
+          {partnerMessage && (
+            <p className="mt-3 rounded-2xl bg-[hsl(160_50%_45%)]/10 p-3 text-sm font-bold text-[hsl(160_50%_45%)]">
+              {partnerMessage}
             </p>
-            <Button
-              id="0frvww"
-              onClick={() => setConnectedPartner({ id: "mock-partner", name: "Emily" })}
-              className="mt-3 rounded-2xl bg-[hsl(24_80%_58%)] text-white"
-            >
-              Invite Partner
-            </Button>
-          </div>
-        )}
+          )}
+        </div>
 
         <div className="mb-4 grid grid-cols-3 rounded-3xl bg-zinc-100 p-1 dark:bg-zinc-800">
           {[
@@ -3519,7 +4129,7 @@ function Entertainment({ log, setLog }) {
 
       <SoftCard>
         <div className="mb-5">
-          <p className="text-3xl font-bold tracking-tight">Entertainment</p>
+          <p className="text-2xl font-bold tracking-tight sm:text-3xl">Entertainment</p>
           <p className="mt-1 text-sm text-zinc-500">Discover what&apos;s trending</p>
         </div>
 
@@ -3575,15 +4185,47 @@ export default function App() {
     }
     return null;
   });
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restoreSession() {
+      const currentUser = await getCurrentUser();
+      if (cancelled) return;
+
+      if (currentUser) {
+        localStorage.setItem("dayflow_user", JSON.stringify(currentUser));
+        localStorage.setItem("dayflow_active_session", "true");
+        setUser(currentUser);
+      }
+      setAuthLoading(false);
+    }
+
+    restoreSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function handleAuthenticated(nextUser) {
     setUser(nextUser);
   }
 
-  function handleLogout() {
-    // Future Supabase Auth: replace this with supabase.auth.signOut().
-    localStorage.setItem("dayflow_active_session", "false");
+  async function handleLogout() {
+    await signOutWithSupabase();
     setUser(null);
+  }
+
+  if (authLoading) {
+    return (
+      <div className="safe-bottom safe-top flex min-h-screen items-center justify-center bg-[hsl(30_30%_98%)] text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
+        <div className="rounded-3xl bg-white p-5 text-center shadow-sm dark:bg-zinc-900">
+          <p className="text-2xl font-black">Xlife</p>
+          <p className="mt-1 text-sm text-zinc-500">Loading your flow...</p>
+        </div>
+      </div>
+    );
   }
 
   if (!user) {
