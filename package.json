@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:e2e": "node e2e/test.mjs && node e2e/test2.mjs && node e2e/test3.mjs"
+    "test:unit": "node --import ./e2e/register-loader.mjs e2e/test-unit.mjs",
+    "test:e2e": "npm run test:unit && node e2e/test.mjs && node e2e/test2.mjs && node e2e/test3.mjs && node e2e/test4.mjs"
   },
   "dependencies": {
     "@capacitor/barcode-scanner": "^3.1.3",
