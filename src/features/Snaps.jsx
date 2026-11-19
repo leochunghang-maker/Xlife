@@ -15,7 +15,7 @@ import { AiEstimate } from "./MealTools.jsx";
 
 const emptyFoodForm = { meal_type: getMealTypeForNow(), name: "", calories: "", protein_g: "", sugar_g: "", cost: "", rating: 0, notes: "" };
 const emptySpendingForm = { item_name: "", amount: "", category: "Food", merchant: "", notes: "" };
-export function Snaps({ log, setLog, pendingSnap, setPendingSnap }) {
+export function Snaps({ log, commitLog, pendingSnap, setPendingSnap }) {
   // `pendingSnap` is owned by AppShell (and mirrored to localStorage) so the
   // review screen cannot be lost if this component remounts while the native
   // camera is open. This was the cause class behind "the first photo after
@@ -122,7 +122,7 @@ export function Snaps({ log, setLog, pendingSnap, setPendingSnap }) {
 
   function saveMemory() {
     if (!preview) return;
-    setLog((current) => ({
+    const ok = commitLog((current) => ({
       ...current,
       snaps: [
         ...(current.snaps || []),
@@ -136,6 +136,10 @@ export function Snaps({ log, setLog, pendingSnap, setPendingSnap }) {
         },
       ],
     }));
+    if (!ok) {
+      setCaptureError("Couldn't save that memory on this phone. Your photo is still here — free some space and try again.");
+      return;
+    }
     clearCapture();
     setSaveMessage("Memory saved. It's on Home under Today's snaps.");
   }
@@ -170,9 +174,12 @@ export function Snaps({ log, setLog, pendingSnap, setPendingSnap }) {
       time: now.toTimeString().slice(0, 5),
       createdAt: now.toISOString(),
     };
+    const ok = commitLog((current) => ({ ...current, meals: [...(current.meals || []), nextMeal] }));
+    if (!ok) {
+      setCaptureError("Couldn't save that meal on this phone. Your photo is still here — free some space and try again.");
+      return;
+    }
     const history = readLocalJSON("dayflow_meal_history", []);
-
-    setLog((current) => ({ ...current, meals: [...(current.meals || []), nextMeal] }));
     // Meal history keeps the nutrition data for recommendations; the photo
     // itself is stored once (in today's log) to save space.
     writeLocalJSON("dayflow_meal_history", [...history, { ...nextMeal, image_url: "", photo_url: "" }]);
@@ -199,7 +206,12 @@ export function Snaps({ log, setLog, pendingSnap, setPendingSnap }) {
       createdAt: new Date().toISOString(),
     };
 
-    setSpendingRecords((current) => [...current, nextSpending]);
+    const nextRecords = [...spendingRecords, nextSpending];
+    if (!writeLocalJSON("dayflow_spending", nextRecords)) {
+      setCaptureError("Couldn't save that spending record on this phone. Your photo is still here — free some space and try again.");
+      return;
+    }
+    setSpendingRecords(nextRecords);
     // Clear the review like Save Memory / Save meal do; previously the form
     // stayed open and a second tap saved a duplicate record.
     clearCapture();
