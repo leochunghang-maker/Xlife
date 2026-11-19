@@ -165,5 +165,6 @@ No setup is needed. The app uses the free [Open Food Facts](https://world.openfo
    - Gym → Export workouts (CSV) opens the share sheet.
    - Health → Cycle report → Share opens the share sheet.
 7. **Midnight:** leave the app open across midnight with text half-typed. The "new day" banner should appear and the text should stay.
-8. **Snaps / Us / Meals (merged from your local build):** Snaps is full-screen with no header; after a photo you get Save Memory / Mark Food / Track Spending / Retake. In Us, Invite Partner shows a code, Copy/Share work. In Meals, Use My Location asks for permission and Open in Apple Maps leaves the app to Maps.
-9. **Cloud (if configured):** on phone A, sign in and back up. Then sign in on phone B, check that the restore works, and check that pairing and sharing toggles control what the partner sees.
+8. **Offline backup:** Settings → Export backup writes a JSON file (Share / Files on iPhone). Restore from backup only adds missing items; confirm the prompt. Do this before reinstalling if the app shows "Xlife is no longer available".
+9. **Snaps / Us / Meals (merged from your local build):** Snaps is full-screen with no header; after a photo you get Save Memory / Mark Food / Track Spending / Retake. In Us, Invite Partner shows a code, Copy/Share work. In Meals, Use My Location asks for permission and Open in Apple Maps leaves the app to Maps.
+10. **Cloud (if configured):** on phone A, sign in and back up. Then sign in on phone B, check that the restore works, and check that pairing and sharing toggles control what the partner sees.

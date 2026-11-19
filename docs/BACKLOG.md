@@ -62,6 +62,14 @@ device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
 - Snaps food: the local build's fixed "Grilled chicken rice bowl" AI estimate was replaced by the real AI function (when configured) or manual entry.
 - Cloud session restore on launch + Xlife loading screen; safe-area and dark-mode input fixes.
 
+## 2c. Reliability pass 3 (branch `fix/reliability-pass-3`)
+- Snaps only clears the pending photo and says "saved" after today's log has been written and confirmed. A full-storage failure keeps the photo on screen for a retry.
+- Offline backup / restore lives in Settings: a versioned JSON package (`xlife-backup` v1) includes photos (read back from Filesystem / IndexedDB) and the documented `dayflow_*` / `xlife_*` keys (My foods, Together / countdowns, partner connection, preferences, …). Restore is add-only and will not let a blank same-day log replace a richer one.
+- The same same-day merge / "don't upsert a blank log over a richer one" rule is used by the still-disabled cloud backup/restore path. **Do not enable Xlife Cloud sharing until the later permission and account-isolation work is done.**
+- Photo existence is checked with stat/read-back, not by generating a URI. Native and web photo writes are verified the same way, including migration.
+- Crossing midnight clears `sets[].done` as well as `exercise.done`, while keeping last weights/reps.
+- `npm run test:e2e` now fails the process on any FAIL (unit + browser suites).
+
 ## 3. Backlog (what's left)
 
 ### Needs you (credentials / device)
