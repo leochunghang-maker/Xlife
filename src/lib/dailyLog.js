@@ -69,8 +69,15 @@ export function loadTodayLog() {
 
   const lastType = saved.workout?.type || "Chest";
   const template = readLocalJSON(`dayflow_workout_${lastType}`, {});
+  // Carry last weights/reps into the new day, but never leave yesterday's
+  // set checkmarks ticked (legacy `done` and multi-set `sets[].done`).
   const previousValues = Object.fromEntries(
-    Object.entries(template || {}).map(([name, item]) => [name, { ...item, done: false }])
+    Object.entries(template || {}).map(([name, item]) => {
+      const sets = Array.isArray(item?.sets)
+        ? item.sets.map((set) => ({ ...set, done: false }))
+        : undefined;
+      return [name, { ...item, done: false, ...(sets ? { sets } : {}) }];
+    })
   );
   return createEmptyDailyLog(todayISO, {
     calorie_goal: saved.calorie_goal,
