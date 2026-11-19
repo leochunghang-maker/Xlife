@@ -1,5 +1,12 @@
 # Xlife setup guide
 
+> **Cloud remains disabled pending review and live verification.** Pass 4 adds
+> `20261119000000_partner_authorization.sql`; existing installations must apply it
+> after the earlier migrations before any future cloud rollout. Do not enable or
+> deploy from this checklist alone. Read [SECURITY_MODEL.md](SECURITY_MODEL.md)
+> for consent pairing, record-scoped photos, legacy invite expiry, explicit local
+> ownership association, offline recovery and manual verification requirements.
+
 Xlife works fully offline in **local-only mode** with no setup. This guide covers:
 
 1. Running the app on an iPhone.
