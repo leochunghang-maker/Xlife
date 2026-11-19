@@ -5,7 +5,7 @@ import { cuisineCategories, normalizeText } from "../lib/food";
 import { classNames } from "../lib/utils";
 import { toggleListValue } from "../lib/cycle";
 import { isSupabaseConfigured } from "../lib/supabase";
-import { cloudSignUp, cloudSignIn, restoreFromCloud } from "../lib/cloud";
+import { cloudSignUp, cloudSignIn, cloudSignOut, restoreFromCloud, readDataOwner } from "../lib/cloud";
 
 export function Onboarding({ onAuthenticated }) {
   const [screen, setScreen] = useState("welcome");
@@ -83,6 +83,7 @@ export function Onboarding({ onAuthenticated }) {
       }
       const localUser = readLocalJSON("dayflow_user", null);
       if (localUser && normalizeText(localUser.email) !== normalizeText(signInForm.email)) {
+        await cloudSignOut();
         setAuthError(`This phone already has an Xlife profile for ${localUser.email}. Sign in with that account.`);
         return;
       }
@@ -96,7 +97,7 @@ export function Onboarding({ onAuthenticated }) {
       };
       if (!localUser) writeLocalJSON("dayflow_user", profile);
       // Bring down anything this phone doesn't have yet (never overwrites).
-      restoreFromCloud().catch((restoreError) => console.warn("[xlife] restore failed", restoreError));
+      if (readDataOwner()) restoreFromCloud().catch((restoreError) => console.warn("[xlife] restore failed", restoreError));
       localStorage.setItem("dayflow_active_session", "true");
       setAuthError("");
       onAuthenticated(profile);

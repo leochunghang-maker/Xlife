@@ -1,3 +1,4 @@
+import { isCloudIdentityKey, validateBackupOwner, preserveRestoreOwner } from "./accountOwner";
 // Offline, versioned backup package for everything Xlife stores on this phone:
 // localStorage records (dayflow_* / xlife_*) plus photos from the photo store.
 //
@@ -364,6 +365,8 @@ export function parseBackupPackage(input) {
 
 export async function applyBackupPackage(pkg, { storage = localStorage, reload = false } = {}) {
   const parsed = parseBackupPackage(pkg);
+  validateBackupOwner(parsed, storage);
+  preserveRestoreOwner(parsed);
   const report = { addedKeys: 0, updatedKeys: 0, addedPhotos: 0, skippedPhotos: 0, failedPhotos: [], warnings: [] };
 
   for (const [ref, dataUrl] of Object.entries(parsed.photos || {})) {
@@ -386,6 +389,8 @@ export async function applyBackupPackage(pkg, { storage = localStorage, reload =
 
   for (const [key, incoming] of Object.entries(parsed.keys || {})) {
     if (!key || !(key.startsWith("dayflow_") || key.startsWith("xlife_"))) continue;
+    if (isCloudIdentityKey(key)) { report.warnings.push(`Kept device-only identity/session metadata: ${key}`); continue; }
+    if (key === "dayflow_user" && storage.getItem(key)) continue;
     const local = parseStored(storage.getItem(key));
     const { entry, changed } = mergeStoredValue(key, local, incoming);
     if (!changed) continue;

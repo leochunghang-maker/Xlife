@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { isSupabaseConfigured } from "../lib/supabase";
-import { getCouple, getPartnerFeed, partnerPhotoUrl } from "../lib/cloud";
+import { getCouple, getPartnerFeed, partnerPhotoUrl, getCloudSession, onCloudAuthChange } from "../lib/cloud";
 
 function PartnerPhoto({ partnerId, refValue, alt }) {
   const [url, setUrl] = useState("");
   useEffect(() => {
     let active = true;
-    partnerPhotoUrl(partnerId, refValue).then((value) => { if (active) setUrl(value); });
+    partnerPhotoUrl(partnerId, refValue).then((value) => { if (active) setUrl(value); }).catch(() => { if (active) setUrl(""); });
     return () => { active = false; };
   }, [partnerId, refValue]);
   return url ? <img src={url} alt={alt} className="mt-2 h-40 w-full rounded-2xl object-cover" /> : null;
@@ -29,12 +29,20 @@ export function PartnerFeed() {
   useEffect(() => {
     if (!isSupabaseConfigured) return undefined;
     let active = true;
-    (async () => {
-      const couple = await getCouple().catch(() => null);
-      const items = couple ? await getPartnerFeed(couple.partnerId).catch(() => []) : [];
-      if (active) setState({ loading: false, couple, items });
-    })();
-    return () => { active = false; };
+    let generation = 0;
+    function reload(session) {
+      const current = ++generation;
+      setState({ loading: Boolean(session), couple: null, items: [] });
+      if (!session) return;
+      (async () => {
+        const couple = await getCouple().catch(() => null);
+        const items = couple ? await getPartnerFeed(couple.partnerId).catch(() => []) : [];
+        if (active && generation === current) setState({ loading: false, couple, items });
+      })();
+    }
+    getCloudSession().then(session => { if (active) reload(session); }).catch(() => { if (active) reload(null); });
+    const unsubscribe = onCloudAuthChange(reload);
+    return () => { active = false; generation += 1; unsubscribe(); };
   }, []);
 
   if (!isSupabaseConfigured || state.loading || !state.couple) return null;
