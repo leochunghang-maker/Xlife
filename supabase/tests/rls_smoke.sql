@@ -21,13 +21,31 @@ end $$;
 -- Ben before pairing sees nothing
 select set_config('request.jwt.sub','22222222-2222-2222-2222-222222222222', false);
 select count(*) as ben_sees_memories_before from public.memories;
+do $$ begin
+  if (select count(*) from public.memories) <> 0 then
+    raise exception 'RLS FAIL: partner saw memories before pairing';
+  end if;
+end $$;
 select public.accept_couple_invite(:'code') is not null as paired;
 select count(*) as ben_sees_memories_after from public.memories;
 select count(*) as ben_sees_cycle_after from public.period_logs;
+do $$ begin
+  if (select count(*) from public.memories) <> 1 then
+    raise exception 'RLS FAIL: partner should see 1 shared memory after pairing, got %', (select count(*) from public.memories);
+  end if;
+  if (select count(*) from public.period_logs) <> 0 then
+    raise exception 'RLS FAIL: partner saw unshared cycle data';
+  end if;
+end $$;
 select name as partner_name from public.profiles where id = '11111111-1111-1111-1111-111111111111';
 -- Carl (unpaired) sees nothing, cannot reuse code
 select set_config('request.jwt.sub','33333333-3333-3333-3333-333333333333', false);
 select count(*) as carl_sees from public.memories;
+do $$ begin
+  if (select count(*) from public.memories) <> 0 then
+    raise exception 'RLS FAIL: unpaired user saw memories';
+  end if;
+end $$;
 do $$ begin perform public.accept_couple_invite('ZZZZZZZZ'); raise exception 'FAIL'; exception when others then raise notice 'ok: bad code rejected: %', sqlerrm; end $$;
 -- storage
 select set_config('request.jwt.sub','11111111-1111-1111-1111-111111111111', false);
@@ -41,6 +59,11 @@ select set_config('request.jwt.sub','11111111-1111-1111-1111-111111111111', fals
 update public.couple_shares set shared=false where user_id=auth.uid() and category='memories';
 select set_config('request.jwt.sub','22222222-2222-2222-2222-222222222222', false);
 select count(*) as ben_sees_after_unshare from public.memories;
+do $$ begin
+  if (select count(*) from public.memories) <> 0 then
+    raise exception 'RLS FAIL: partner still saw memories after unshare';
+  end if;
+end $$;
 select public.leave_couple();
 select count(*) as couples_left from public.couples;
 -- daily question reveal rule
@@ -52,5 +75,15 @@ select set_config('request.jwt.sub','11111111-1111-1111-1111-111111111111', fals
 insert into public.couple_answers (id, user_id, date, question, answer) values ('a:q1', auth.uid(), '2026-11-13', 'Q?', 'Ann answer');
 select set_config('request.jwt.sub','22222222-2222-2222-2222-222222222222', false);
 select count(*) as ben_sees_answer_before_answering from public.couple_answers;
+do $$ begin
+  if (select count(*) from public.couple_answers) <> 0 then
+    raise exception 'RLS FAIL: partner saw an answer before answering';
+  end if;
+end $$;
 insert into public.couple_answers (id, user_id, date, question, answer) values ('b:q1', auth.uid(), '2026-11-13', 'Q?', 'Ben answer');
 select count(*) as ben_sees_answers_after_answering from public.couple_answers;
+do $$ begin
+  if (select count(*) from public.couple_answers) <> 2 then
+    raise exception 'RLS FAIL: both answers should be visible after both answered, got %', (select count(*) from public.couple_answers);
+  end if;
+end $$;

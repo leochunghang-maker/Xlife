@@ -6,6 +6,7 @@ import { readReminders, saveReminders, ensurePermission, notificationsSupported,
 import { PRIVACY_CATEGORIES, readPrivacy, savePrivacy } from "../lib/privacy";
 import { classNames } from "../lib/utils";
 import { CloudSettings } from "./CloudSettings.jsx";
+import { BackupSettings } from "./BackupSettings.jsx";
 import { pushSharingPreferences } from "../lib/cloud";
 
 function Toggle({ checked, onChange, label, disabled }) {
@@ -98,6 +99,8 @@ export function Settings({ user, onClose, onLogout, focus }) {
         </div>
 
         <CloudSettings user={user} />
+
+        <BackupSettings />
 
         <Section title="Privacy & security" note={appLockSupported() ? "Xlife locks again after a minute in the background." : "Face ID lock is available in the iPhone app."}>
           <Row label="Lock with Face ID / passcode">

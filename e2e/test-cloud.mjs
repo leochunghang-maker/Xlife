@@ -33,3 +33,4 @@ const URL = process.env.XLIFE_CLOUD_URL || "http://localhost:4174/";
 }
 await browser.close();
 console.log(results.join("\n"));
+if (results.some((r) => r.startsWith("FAIL"))) process.exit(1);

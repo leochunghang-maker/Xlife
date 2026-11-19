@@ -273,3 +273,4 @@ async function seeded(page, extra = {}) {
 
 await browser.close();
 console.log(results.join("\n"));
+if (results.some((r) => r.startsWith("FAIL"))) process.exit(1);

@@ -12,5 +12,9 @@ try {
   console.log("re-run:", psql("supabase/migrations/20261113000000_xlife_init.sql") ? "idempotent ok" : "");
   psql("supabase/migrations/20261113000100_couple_daily_question.sql");
   console.log(psql("supabase/tests/rls_smoke.sql"));
-} catch (e) { console.log("FAILED", e.stdout?.slice(-1500), e.stderr?.slice(-2500)); }
+} catch (e) {
+  console.log("FAILED", e.stdout?.slice(-1500), e.stderr?.slice(-2500));
+  await pg.stop();
+  process.exit(1);
+}
 await pg.stop();

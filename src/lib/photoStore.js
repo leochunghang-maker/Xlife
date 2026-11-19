@@ -62,20 +62,48 @@ function refId(ref) {
   return ref.slice(PHOTO_REF_PREFIX.length).replace(/[^a-zA-Z0-9-]/g, "");
 }
 
-// Stores a data URL under a known reference (used when restoring from cloud).
+async function writeAndVerify(id, dataUrl) {
+  if (hasNativeFiles()) {
+    const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+    if (!base64) throw new Error("Photo could not be verified after saving.");
+    await Filesystem.writeFile({ path: `photos/${id}.jpg`, data: base64, directory: Directory.Data, recursive: true });
+    await Filesystem.stat({ path: `photos/${id}.jpg`, directory: Directory.Data });
+    const { data } = await Filesystem.readFile({ path: `photos/${id}.jpg`, directory: Directory.Data });
+    const stored = typeof data === "string" ? data.length > 0 : Boolean(data?.size || data);
+    if (!stored) throw new Error("Photo could not be verified after saving.");
+  } else {
+    await idb("readwrite", (store) => store.put(dataUrl, id));
+    const check = await idb("readonly", (store) => store.get(id));
+    if (check !== dataUrl) throw new Error("Photo could not be verified after saving.");
+  }
+}
+
+// Stores a data URL under a known reference (used when restoring from a backup
+// or from the cloud). Verifies with a stat/read-back before returning.
 export async function savePhotoWithRef(ref, dataUrl) {
   if (!isPhotoRef(ref) || !isInlinePhoto(dataUrl)) return;
   const id = refId(ref);
-  if (hasNativeFiles()) {
-    await Filesystem.writeFile({ path: `photos/${id}.jpg`, data: dataUrl.slice(dataUrl.indexOf(",") + 1), directory: Directory.Data, recursive: true });
-  } else {
-    await idb("readwrite", (store) => store.put(dataUrl, id));
-  }
+  await writeAndVerify(id, dataUrl);
   urlCache.delete(ref);
 }
 
+// True only when the file / IndexedDB value can actually be read, not merely
+// when a URI can be generated (getUri succeeds for a missing path).
 export async function hasPhoto(ref) {
-  return Boolean(await resolvePhoto(ref));
+  if (!isPhotoRef(ref)) return false;
+  const id = refId(ref);
+  try {
+    if (hasNativeFiles()) {
+      const { size } = await Filesystem.stat({ path: `photos/${id}.jpg`, directory: Directory.Data });
+      if (size === 0) return false;
+      const { data } = await Filesystem.readFile({ path: `photos/${id}.jpg`, directory: Directory.Data });
+      return Boolean(typeof data === "string" ? data : data?.size);
+    }
+    const check = await idb("readonly", (store) => store.get(id));
+    return Boolean(check);
+  } catch {
+    return false;
+  }
 }
 
 export function photoRefId(ref) {
@@ -88,15 +116,7 @@ export async function savePhoto(dataUrl) {
   if (!isInlinePhoto(dataUrl)) return dataUrl;
   const id = createId();
   const ref = `${PHOTO_REF_PREFIX}${id}`;
-  if (hasNativeFiles()) {
-    const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-    await Filesystem.writeFile({ path: `photos/${id}.jpg`, data: base64, directory: Directory.Data, recursive: true });
-    await Filesystem.stat({ path: `photos/${id}.jpg`, directory: Directory.Data });
-  } else {
-    await idb("readwrite", (store) => store.put(dataUrl, id));
-    const check = await idb("readonly", (store) => store.get(id));
-    if (check !== dataUrl) throw new Error("Photo could not be verified after saving.");
-  }
+  await writeAndVerify(id, dataUrl);
   urlCache.set(ref, dataUrl);
   return ref;
 }
@@ -161,6 +181,35 @@ export async function deletePhoto(value) {
     else await idb("readwrite", (store) => store.delete(id));
   } catch {
     // Already gone.
+  }
+}
+
+
+export function collectPhotoRefs(value, out = new Set()) {
+  if (isPhotoRef(value)) out.add(value);
+  else if (Array.isArray(value)) value.forEach((item) => collectPhotoRefs(item, out));
+  else if (value && typeof value === "object") Object.values(value).forEach((item) => collectPhotoRefs(item, out));
+  return out;
+}
+
+// Every photo currently in the store, including ones no record points at.
+export async function listPhotoRefs() {
+  if (hasNativeFiles()) {
+    try {
+      const { files } = await Filesystem.readdir({ path: "photos", directory: Directory.Data });
+      return (files || [])
+        .map((file) => file.name || file)
+        .filter((name) => String(name).toLowerCase().endsWith(".jpg"))
+        .map((name) => `${PHOTO_REF_PREFIX}${String(name).replace(/\.jpg$/i, "")}`);
+    } catch {
+      return [];
+    }
+  }
+  try {
+    const keys = await idb("readonly", (store) => store.getAllKeys());
+    return (keys || []).map((id) => `${PHOTO_REF_PREFIX}${id}`);
+  } catch {
+    return [];
   }
 }
 
