@@ -6,6 +6,7 @@
 // protected by Row Level Security (supabase/migrations). NEVER put the
 // service-role key or the OpenAI key in a VITE_ variable — those live only in
 // Supabase Edge Function secrets.
+import { ownerGuardedFetch, invalidateCloudOperations, assertIdentity } from "./accountOwner";
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -18,6 +19,21 @@ export const isAiNutritionEnabled = isSupabaseConfigured && import.meta.env.VITE
 
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey, {
+      global: { fetch: ownerGuardedFetch },
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
     })
   : null;
+
+// Never perform async auth work inside this callback (Supabase holds its auth lock).
+let authUid;
+if (supabase) supabase.auth.onAuthStateChange((event, session) => {
+  const next = session?.user?.id || null;
+  if (next !== authUid || event === 'SIGNED_OUT') invalidateCloudOperations();
+  authUid = next;
+  if (session) {
+    try { assertIdentity(session.user); } catch {
+      invalidateCloudOperations();
+      queueMicrotask(() => { supabase.auth.signOut({ scope: 'local' }).catch(() => {}); });
+    }
+  }
+});

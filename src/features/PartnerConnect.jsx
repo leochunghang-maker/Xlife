@@ -1,3 +1,4 @@
+import { readDataOwner, accountEpoch, assertAccountEpoch, assertDataOwner } from "../lib/accountOwner";
 import { useEffect, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Share } from "@capacitor/share";
@@ -32,9 +33,11 @@ export function PartnerConnect({ demoActive, onStartDemo, onChange }) {
       const session = await getCloudSession().catch(() => null);
       if (cancelled) return;
       setCloudSignedIn(Boolean(session));
-      if (!session) return;
+      if (!session || !readDataOwner()) return;
+      const expectedEpoch = accountEpoch();
       const couple = await getCouple().catch(() => null);
       if (cancelled) return;
+      try { assertAccountEpoch(expectedEpoch); assertDataOwner(session.user); } catch { return; }
       const current = readPartnerConnection();
       if (couple) {
         update({
@@ -69,14 +72,15 @@ export function PartnerConnect({ demoActive, onStartDemo, onChange }) {
     let inviteCode = generateLocalInviteCode();
     if (useCloud) {
       setBusy(true);
-      const { createCoupleInvite } = await import("../lib/cloud");
-      const { code, error: inviteError } = await createCoupleInvite();
-      setBusy(false);
-      if (inviteError || !code) {
-        setError(inviteError?.message || "Couldn't create an invite code. Try again.");
-        return;
-      }
-      inviteCode = code;
+      const expected = accountEpoch();
+      try {
+        const { createCoupleInvite } = await import("../lib/cloud");
+        const { code, error: inviteError } = await createCoupleInvite();
+        assertAccountEpoch(expected);
+        if (inviteError || !code) throw inviteError || new Error("Couldn't create an invite code. Try again.");
+        inviteCode = code;
+      } catch (error) { setError(error.message); return; }
+      finally { setBusy(false); }
     }
     update({
       id: crypto.randomUUID(),
@@ -130,27 +134,27 @@ export function PartnerConnect({ demoActive, onStartDemo, onChange }) {
     const now = new Date().toISOString();
     if (useCloud) {
       setBusy(true);
-      const { acceptCoupleInvite, getCouple } = await import("../lib/cloud");
-      const { coupleId, error: acceptError } = await acceptCoupleInvite(code);
-      if (acceptError) {
-        setBusy(false);
-        setError(acceptError.message || "That code didn't work. Check it and try again.");
-        return;
-      }
-      const couple = await getCouple().catch(() => null);
-      setBusy(false);
-      update({
-        id: coupleId || couple?.id || crypto.randomUUID(),
-        ownerUserId: user?.id || "local-user",
-        inviteCode: code,
-        partnerName: couple?.partnerName || "Partner",
-        partnerEmail: null,
-        status: "connected",
-        createdAt: connection?.createdAt || now,
-        connectedAt: now,
-        cloud: true,
-        local: false,
-      });
+      const expected = accountEpoch();
+      try {
+        const { acceptCoupleInvite, getCouple } = await import("../lib/cloud");
+        const { coupleId, error: acceptError } = await acceptCoupleInvite(code);
+        if (acceptError) throw acceptError;
+        const couple = await getCouple();
+        assertAccountEpoch(expected);
+        update({
+          id: coupleId || couple?.id || crypto.randomUUID(),
+          ownerUserId: user?.id || "local-user",
+          inviteCode: code,
+          partnerName: couple?.partnerName || "Partner",
+          partnerEmail: null,
+          status: "connected",
+          createdAt: connection?.createdAt || now,
+          connectedAt: now,
+          cloud: true,
+          local: false,
+        });
+      } catch (error) { setError(error.message); return; }
+      finally { setBusy(false); }
     } else {
       update({
         id: connection?.id || crypto.randomUUID(),
@@ -173,9 +177,14 @@ export function PartnerConnect({ demoActive, onStartDemo, onChange }) {
     if (connection?.cloud && connection.status === "connected") {
       if (!window.confirm("Disconnect from your partner? They will stop seeing anything you share.")) return;
       setBusy(true);
-      const { leaveCouple } = await import("../lib/cloud");
-      await leaveCouple().catch(() => {});
-      setBusy(false);
+      const expected = accountEpoch();
+      try {
+        const { leaveCouple } = await import("../lib/cloud");
+        const { error } = await leaveCouple();
+        if (error) throw error;
+        assertAccountEpoch(expected);
+      } catch (error) { setError(error.message); return; }
+      finally { setBusy(false); }
     }
     update(null);
     setCodeInput("");
@@ -229,7 +238,7 @@ export function PartnerConnect({ demoActive, onStartDemo, onChange }) {
             <div className="space-y-3">
               <div className="rounded-3xl bg-white p-4 text-center shadow-sm dark:bg-zinc-900">
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-zinc-400">Invite code</p>
-                <p className="mt-1 text-2xl font-black tracking-wide" aria-label="Partner invite code">{connection.inviteCode}</p>
+                <p className="mt-1 break-all font-mono text-base font-black tracking-wide" aria-label="Partner invite code">{connection.inviteCode}</p>
                 <p className="mt-1 text-xs font-semibold text-zinc-500">Waiting for partner...</p>
               </div>
               <div className="grid grid-cols-2 gap-2">
