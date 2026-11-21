@@ -1,5 +1,11 @@
 # Xlife setup guide
 
+> Pass 5 also requires `20261121000000_atomic_ai_quota.sql` and the updated
+> Edge Function in a later approved rollout; **do not enable/deploy cloud or AI
+> from this PR**. See [LOCK_AI_HARDENING.md](LOCK_AI_HARDENING.md). Native lock
+> changes include CapacitorApp, requiring build + cap sync + on-device checks;
+> the JS privacy shield is not guaranteed native snapshot protection.
+
 > **Cloud remains disabled pending review and live verification.** Pass 4 adds
 > `20261119000000_partner_authorization.sql`; existing installations must apply it
 > after the earlier migrations before any future cloud rollout. Do not enable or
@@ -47,6 +53,7 @@ Native plugins (Swift Package Manager, written by `cap sync`):
 - `@capacitor/share` (CSV and report export)
 - `@capacitor/barcode-scanner`
 - `@capgo/capacitor-native-biometric` (Face ID lock)
+- `@capacitor/app` (lock lifecycle/pause events)
 
 Permissions are requested only when needed:
 
@@ -132,7 +139,7 @@ Then rebuild: `npm run build && npx cap sync ios`.
    ```bash
    supabase secrets set OPENAI_API_KEY=sk-...
    # optional:
-   supabase secrets set OPENAI_MODEL=gpt-4o-mini AI_DAILY_LIMIT=30
+   supabase secrets set OPENAI_MODEL=gpt-4o-mini
    ```
 3. Deploy the function (JWT verification stays on, per `supabase/config.toml`):
    ```bash
@@ -145,7 +152,7 @@ Then rebuild: `npm run build && npx cap sync ios`.
    3. Tap **Estimate with AI**.
    4. Edit the approximate values, then **Use these values** and **Add**.
 
-   Only signed-in users can call the function, and each user has a daily quota.
+   Only signed-in, locally associated users can call from the app. The new SQL quota is 30 attempts per UTC calendar day (08:00 Hong Kong reset), configured in protected `ai_quota_config`, not `AI_DAILY_LIMIT`. Apply the new migration before any future function rollout; see the hardening guide.
 
 ---
 
@@ -165,7 +172,7 @@ No setup is needed. The app uses the free [Open Food Facts](https://world.openfo
    - Snapping new photos works.
    - The "Storage is full" banner no longer appears after many photos.
 2. **Camera:** capture, gallery, and cancel all work. If you denied permission, the app shows a message.
-3. **Face ID:** turn the lock on, background the app for more than 1 minute, and check that it asks for Face ID when you return.
+3. **Face ID:** turn the lock on and off without restart. Enable it, background for at least 1 minute, return and tap Unlock. Cancel/fail must stay locked; retry succeeds without loops. Check keyboard and app-switcher snapshots manually (JS shielding is not an OS guarantee).
 4. **Notifications:** turn on the journal reminder at a time 2 minutes away and check that it arrives. Also check the rest timer notification while the app is in the background.
 5. **Barcode:** scan a packaged food, check the values, and add it.
 6. **Exports:**

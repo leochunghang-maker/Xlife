@@ -6,7 +6,20 @@ import { NativeBiometric } from "@capgo/capacitor-native-biometric";
 import { readLocalJSON, writeLocalJSON } from "./storage";
 
 export const APP_LOCK_KEY = "xlife_app_lock";
-export const LOCK_AFTER_MS = 60 * 1000; // re-lock after 1 minute in the background
+export { LOCK_AFTER_MS } from './lockController';
+const APP_LOCK_CHANGED = 'xlife:app-lock-changed';
+let prompting = false;
+export const biometricPromptActive = () => prompting;
+// A configured native lock must fail CLOSED if its biometric plugin becomes
+// unavailable. Web cannot provide native biometrics and never claims to lock.
+export const appLockEnabledSnapshot = () => Capacitor.isNativePlatform() && Boolean(readAppLock().enabled);
+export function subscribeAppLock(callback) {
+  const changed = event => callback({ verified: Boolean(event.detail?.verified) });
+  const stored = event => { if (event.key === APP_LOCK_KEY || event.key === null) callback({ verified: false }); };
+  window.addEventListener(APP_LOCK_CHANGED, changed);
+  window.addEventListener('storage', stored);
+  return () => { window.removeEventListener(APP_LOCK_CHANGED, changed); window.removeEventListener('storage', stored); };
+}
 
 export function appLockSupported() {
   return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable("NativeBiometric");
@@ -16,8 +29,10 @@ export function readAppLock() {
   return { enabled: false, ...readLocalJSON(APP_LOCK_KEY, {}) };
 }
 
-export function saveAppLock(next) {
-  writeLocalJSON(APP_LOCK_KEY, next);
+export function saveAppLock(next, { verified = false } = {}) {
+  const ok = writeLocalJSON(APP_LOCK_KEY, next);
+  if (ok) window.dispatchEvent(new CustomEvent(APP_LOCK_CHANGED, { detail: { verified } }));
+  return ok;
 }
 
 export async function biometricAvailability() {
@@ -31,7 +46,8 @@ export async function biometricAvailability() {
 }
 
 export async function unlockWithBiometrics() {
-  if (!appLockSupported()) return true;
+  if (!appLockSupported() || prompting) return false;
+  prompting = true;
   try {
     await NativeBiometric.verifyIdentity({
       reason: "Unlock Xlife",
@@ -41,5 +57,7 @@ export async function unlockWithBiometrics() {
     return true;
   } catch {
     return false;
+  } finally {
+    prompting = false;
   }
 }
