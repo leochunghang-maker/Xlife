@@ -1,4 +1,5 @@
 // Synthetic isolated RLS tests, no Docker or live Supabase. Requires psql.
+import { testQuotaConcurrency } from './quota-concurrency.mjs';
 import EmbeddedPostgres from 'embedded-postgres';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -27,6 +28,10 @@ try {
   // ON_ERROR_STOP makes that exit nonzero. Log named PASS assertions as SQL rows.
   console.log(psql('supabase/tests/rls_smoke.sql'));
   console.log(psql('supabase/tests/security_regression.sql'));
+  const quotaUpgrade='supabase/migrations/20261121000000_atomic_ai_quota.sql';
+  psql(quotaUpgrade); psql(quotaUpgrade);
+  console.log(psql('supabase/tests/ai_quota_regression.sql'));
+  await testQuotaConcurrency({port,env:{...process.env,PGPASSWORD:'synthetic-test-password'},psqlFile:psql});
   console.log('PASS isolated SQL migrations (including upgrade re-run) and authenticated/anon security regressions');
 } catch(error) {
   console.error('FAIL isolated SQL:', error.message, error.stdout, error.stderr);
