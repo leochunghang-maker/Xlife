@@ -27,3 +27,15 @@ Chrome and `psql` on PATH. Uses `.invalid` host interception and synthetic
 accounts/tokens; does not enable or deploy cloud/AI. All failures exit nonzero.
 See `docs/SECURITY_MODEL.md` for coverage and limitations. The normal production
 `npm run build` remains local-only without cloud configuration.
+
+## Lock / AI hardening
+
+- `npm run test:lock`: pure controller tests + self-starting Vite alias tests of
+  actual Settings/Gate React UI with mocked native lifecycle/biometrics. No real
+  Face ID or snapshot verification; production never imports these mocks.
+- `npm run test:e2e` includes `test:lock` after the existing production flows.
+- `npm run test:ai`: Deno type-check and no-network injected-auth/DB/upstream tests
+  in `supabase/functions/estimate-nutrition/handler_test.ts`.
+- `test:sql` / `test:security` now execute quota privileges/UTC/fail-closed tests
+  and 40 real concurrent SQL connections against the isolated database.
+See `docs/LOCK_AI_HARDENING.md` for migration and device/live-test limitations.
