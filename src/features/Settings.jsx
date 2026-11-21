@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { X } from "lucide-react";
 import { Button } from "../components/ui.jsx";
-import { appLockSupported, biometricAvailability, readAppLock, saveAppLock, unlockWithBiometrics } from "../lib/appLock";
+import { appLockSupported, biometricAvailability, readAppLock, subscribeAppLock, saveAppLock, unlockWithBiometrics } from "../lib/appLock";
 import { readReminders, saveReminders, ensurePermission, notificationsSupported, applyJournalReminder } from "../lib/notifications";
 import { PRIVACY_CATEGORIES, readPrivacy, savePrivacy } from "../lib/privacy";
 import { classNames } from "../lib/utils";
@@ -47,7 +47,8 @@ function Row({ label, children, sub }) {
 }
 
 export function Settings({ user, onClose, onLogout, focus }) {
-  const [lock, setLock] = useState(readAppLock);
+  const lockEnabled = useSyncExternalStore(subscribeAppLock, () => Boolean(readAppLock().enabled));
+  const [lockBusy, setLockBusy] = useState(false);
   const [lockAvailable, setLockAvailable] = useState(false);
   const [reminders, setReminders] = useState(readReminders);
   const [privacy, setPrivacy] = useState(readPrivacy);
@@ -62,13 +63,18 @@ export function Settings({ user, onClose, onLogout, focus }) {
   }, [focus]);
 
   async function toggleLock(next) {
-    if (next && !(await unlockWithBiometrics())) {
-      setMessage("Face ID / passcode check failed, so the lock wasn't turned on.");
-      return;
-    }
-    const value = { ...lock, enabled: next };
-    saveAppLock(value);
-    setLock(value);
+    if (lockBusy) return;
+    setLockBusy(true);
+    setMessage("");
+    try {
+      if (next && !(await unlockWithBiometrics())) {
+        setMessage("Face ID / passcode check failed, so the lock wasn't turned on.");
+        return;
+      }
+      if (!saveAppLock({ ...readAppLock(), enabled: next }, { verified: next })) {
+        setMessage("Couldn't save the lock setting. It was not changed.");
+      }
+    } finally { setLockBusy(false); }
   }
 
   async function updateJournal(patch) {
@@ -104,7 +110,7 @@ export function Settings({ user, onClose, onLogout, focus }) {
 
         <Section title="Privacy & security" note={appLockSupported() ? "Xlife locks again after a minute in the background." : "Face ID lock is available in the iPhone app."}>
           <Row label="Lock with Face ID / passcode">
-            <Toggle label="Lock with Face ID" checked={lock.enabled} disabled={!lockAvailable} onChange={toggleLock} />
+            <Toggle label="Lock with Face ID" checked={lockEnabled} disabled={!lockAvailable || lockBusy} onChange={toggleLock} />
           </Row>
         </Section>
 
