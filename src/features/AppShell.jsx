@@ -40,10 +40,42 @@ export function AppShell({ user, onLogout }) {
 
   // Persist today's log. Writes are debounced because the log can contain
   // several MB of photo data URLs and was being re-serialised on every
-  // keystroke in Notes. Pending writes are flushed when the app is hidden,
-  // closed, or this shell unmounts, so nothing is lost.
+  // keystroke in Notes. Pending (not-yet-written) changes are flushed when
+  // the app is hidden, closed, or this shell unmounts. A flush must not
+  // rewrite dayflow_log when nothing is pending, or a just-restored or
+  // date-adjusted log in storage would be overwritten on reload.
   const latestLogRef = useRef(log);
   const pendingWriteRef = useRef(null);
+
+  // Immediate, confirmed write for actions that must not show success until
+  // the record is on disk (Snaps save). Returns false if storage rejected it
+  // and leaves React state on the last successful log so the user can retry.
+  function persistLogNow(nextLog) {
+    const ok = writeLocalJSON("dayflow_log", nextLog);
+    if (ok) {
+      latestLogRef.current = nextLog;
+      if (pendingWriteRef.current) {
+        clearTimeout(pendingWriteRef.current);
+        pendingWriteRef.current = null;
+      }
+      setLog(nextLog);
+    }
+    return ok;
+  }
+
+  function commitLog(updater) {
+    const current = latestLogRef.current;
+    const next = typeof updater === "function" ? updater(current) : updater;
+    return persistLogNow(next);
+  }
+
+  function flushLog() {
+    if (!pendingWriteRef.current) return true;
+    clearTimeout(pendingWriteRef.current);
+    pendingWriteRef.current = null;
+    return writeLocalJSON("dayflow_log", latestLogRef.current);
+  }
+
   useEffect(() => {
     latestLogRef.current = log;
     clearTimeout(pendingWriteRef.current);
@@ -54,26 +86,19 @@ export function AppShell({ user, onLogout }) {
   }, [log]);
 
   useEffect(() => {
-    function flush() {
-      if (pendingWriteRef.current) {
-        clearTimeout(pendingWriteRef.current);
-        pendingWriteRef.current = null;
-        writeLocalJSON("dayflow_log", latestLogRef.current);
-      }
-    }
     function handleVisibility() {
       if (document.visibilityState === "hidden") {
-        flush();
+        flushLog();
         localStorage.setItem("dayflow_last_active_at", new Date().toISOString());
         maybeAutoBackup();
       }
     }
     document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("pagehide", flush);
+    window.addEventListener("pagehide", flushLog);
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("pagehide", flush);
-      flush();
+      window.removeEventListener("pagehide", flushLog);
+      flushLog();
     };
   }, []);
 
@@ -92,11 +117,7 @@ export function AppShell({ user, onLogout }) {
   const [newDayPending, setNewDayPending] = useState(false);
   useEffect(() => {
     function rollOver() {
-      if (pendingWriteRef.current) {
-        clearTimeout(pendingWriteRef.current);
-        pendingWriteRef.current = null;
-        writeLocalJSON("dayflow_log", latestLogRef.current);
-      }
+      flushLog();
       window.location.reload();
     }
     function check() {
@@ -198,7 +219,7 @@ export function AppShell({ user, onLogout }) {
           )}
 
           {route === "/meals" && <Meals log={log} setLog={setLog} />}
-          {route === "/snaps" && <Snaps log={log} setLog={setLog} pendingSnap={pendingSnap} setPendingSnap={setPendingSnap} />}
+          {route === "/snaps" && <Snaps log={log} setLog={setLog} commitLog={commitLog} pendingSnap={pendingSnap} setPendingSnap={setPendingSnap} />}
           {route === "/entertainment" && (
             <Entertainment log={log} setLog={setLog} />
           )}

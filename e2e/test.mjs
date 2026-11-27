@@ -289,11 +289,18 @@ async function newPage(colorScheme = "light") {
   await page.locator('input[type=file]:not([capture])').setInputFiles(IMG);
   await page.getByRole("button", { name: "Save Memory" }).click();
   await page.getByRole("button", { name: "Save as Memory" }).click();
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(400);
   ok("quota error shows banner instead of crashing", await page.getByText("Storage is full").isVisible());
+  ok("quota failure keeps the pending photo", await page.getByRole("button", { name: "Save as Memory" }).isVisible());
+  ok("quota failure does not claim success", !(await page.getByText("Memory saved").count()));
+  const pending = await page.evaluate(() => localStorage.getItem("xlife_pending_snap"));
+  ok("quota failure leaves pending snap in storage", Boolean(pending));
+  const snaps = await page.evaluate(() => { try { return (JSON.parse(localStorage.getItem("dayflow_log") || "{}").snaps || []).length; } catch { return -1; } });
+  ok("quota failure does not persist a blank success", snaps === 0, String(snaps));
   ok("app still rendered after quota error", await page.locator("h1").first().isVisible());
   await ctx.close();
 }
 
 await browser.close();
 console.log(results.join("\n"));
+if (results.some((r) => r.startsWith("FAIL"))) process.exit(1);

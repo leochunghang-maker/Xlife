@@ -10,7 +10,8 @@ import { supabase, isSupabaseConfigured } from "./supabase";
 import { readLocalJSON, writeLocalJSON } from "./storage";
 import { getAllMemorySnaps } from "./dailyLog";
 import { readPrivacy, PRIVACY_CATEGORIES } from "./privacy";
-import { isPhotoRef, photoRefId, readPhotoAsDataUrl, savePhotoWithRef, hasPhoto } from "./photoStore";
+import { isPhotoRef, photoRefId, readPhotoAsDataUrl, savePhotoWithRef, hasPhoto, collectPhotoRefs } from "./photoStore";
+import { mergeIncomingDay, shouldSkipCloudDailyUpsert, isSparseLog } from "./backup";
 
 export const CLOUD_STATUS_KEY = "xlife_cloud_status";
 const UPLOADED_PHOTOS_KEY = "xlife_cloud_uploaded_photos";
@@ -61,13 +62,6 @@ function validDate(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }
 
-function collectPhotoRefs(value, out = new Set()) {
-  if (isPhotoRef(value)) out.add(value);
-  else if (Array.isArray(value)) value.forEach((item) => collectPhotoRefs(item, out));
-  else if (value && typeof value === "object") Object.values(value).forEach((item) => collectPhotoRefs(item, out));
-  return out;
-}
-
 function dataUrlToBlob(dataUrl) {
   const [meta, base64] = dataUrl.split(",");
   const mime = /data:([^;]+)/.exec(meta)?.[1] || "image/jpeg";
@@ -92,6 +86,23 @@ async function upsertRows(table, rows) {
     if (error) throw new Error(`${table}: ${error.message}`);
   }
   return rows.length;
+}
+
+// Never upsert a blank / empty daily log over a richer cloud row (a same-day
+// empty working log used to wipe a restored diary on the next backup).
+async function upsertDailyLogs(rows) {
+  let written = 0;
+  for (const row of rows) {
+    if (isSparseLog(row.data)) {
+      const { data: existing, error } = await supabase.from("daily_logs").select("data").eq("id", row.id).maybeSingle();
+      if (error) throw new Error(`daily_logs: ${error.message}`);
+      if (shouldSkipCloudDailyUpsert(row.data, existing?.data)) continue;
+    }
+    const { error } = await supabase.from("daily_logs").upsert(row, { onConflict: "id" });
+    if (error) throw new Error(`daily_logs: ${error.message}`);
+    written += 1;
+  }
+  return written;
 }
 
 // Builds cloud rows from every local store. Pure (reads localStorage only).
@@ -152,7 +163,10 @@ export async function backupLocalToCloud({ onProgress } = {}) {
   await pushSharingPreferences();
   for (const [table, tableRows] of Object.entries(rows)) {
     onProgress?.(`Backing up ${table.replace("_", " ")}…`);
-    counts[table] = await upsertRows(table, tableRows.map((row) => ({ ...row, updated_at: new Date().toISOString() })));
+    const stamped = tableRows.map((row) => ({ ...row, updated_at: new Date().toISOString() }));
+    counts[table] = table === "daily_logs"
+      ? await upsertDailyLogs(stamped)
+      : await upsertRows(table, stamped);
   }
   counts.photos = await uploadPhotos(userId, rows, onProgress);
   const status = { userId, lastBackupAt: new Date().toISOString(), counts };
@@ -186,14 +200,28 @@ export async function restoreFromCloud({ onProgress } = {}) {
   const today = readLocalJSON("dayflow_log", null);
   let newDays = 0;
   const allRows = [];
+  let todayChanged = false;
+  let todayMerged = today;
   for (const row of await fetchAll("daily_logs", userId)) {
     allRows.push(row);
-    if (row.date && !archive[row.date] && row.date !== today?.date) {
-      archive[row.date] = row.data;
+    if (!row.date || !row.data) continue;
+    if (row.date === today?.date) {
+      const result = mergeIncomingDay(todayMerged, row.data);
+      if (result.changed) {
+        todayMerged = result.value;
+        todayChanged = true;
+        newDays += 1;
+      }
+      continue;
+    }
+    const result = mergeIncomingDay(archive[row.date], row.data);
+    if (result.changed) {
+      archive[row.date] = result.value;
       newDays += 1;
     }
   }
   if (newDays) writeLocalJSON("dayflow_daily_logs", archive);
+  if (todayChanged) writeLocalJSON("dayflow_log", todayMerged);
   added.days = newDays;
 
   const simple = [
