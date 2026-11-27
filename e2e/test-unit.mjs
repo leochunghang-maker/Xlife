@@ -77,6 +77,10 @@ const yesterday = (() => {
     },
     photos: {},
   };
+  let rejected = false;
+  try { await applyBackupPackage(pkg); } catch { rejected = true; }
+  ok("U3 foreign-profile backup is rejected before any records change", rejected && !JSON.parse(localStorage.getItem("dayflow_log")).notes);
+  pkg.keys.dayflow_user.value = { id: "local", email: "leo@example.invalid", name: "backup name" };
   const report = await applyBackupPackage(pkg);
   const user = JSON.parse(localStorage.getItem("dayflow_user"));
   const log = JSON.parse(localStorage.getItem("dayflow_log"));
@@ -86,7 +90,7 @@ const yesterday = (() => {
   ok("U3 blank same-day log receives richer backup notes and meals", log.notes === "cloud diary" && log.meals.some((meal) => meal.id === "m2"));
   ok("U3 My foods are added, not replaced", foods.some((food) => food.id === "keep-me") && foods.some((food) => food.id === "new-food"));
   ok("U3 Together / countdowns restored", couple.anniversary === "2020-01-01" && couple.countdowns[0].title === "Trip");
-  ok("U3 restore report counts merges", report.updatedKeys >= 1 && report.addedKeys >= 2);
+  ok("U3 restore report counts merges", report.updatedKeys >= 1 && report.addedKeys >= 1);
 }
 
 {
@@ -100,6 +104,41 @@ const yesterday = (() => {
   let threw = false;
   try { parseBackupPackage({ format: "nope", version: 1, keys: {} }); } catch { threw = true; }
   ok("U4 rejects a foreign file", threw);
+}
+
+// Ownership is never granted by signing in or by restoring identity metadata.
+{
+  const { associateDataOwner, assertDataOwner, readDataOwner, DATA_OWNER_KEY, RESTORE_OWNER_KEY } = await import('../src/lib/accountOwner.js');
+  localStorage.clear();
+  const uid = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const foreign = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  localStorage.setItem('dayflow_user',JSON.stringify({id:'local-a',email:'a@test.invalid'}));
+  let blocked = false;
+  try { assertDataOwner({id:uid,email:'a@test.invalid'}); } catch { blocked = true; }
+  ok('U5 unbound legacy data cannot use cloud',blocked && !readDataOwner());
+  associateDataOwner({id:uid,email:'a@test.invalid'});
+  blocked = false;
+  try { associateDataOwner({id:foreign,email:'a@test.invalid'}); } catch { blocked = true; }
+  ok('U5 associated UID cannot be rebound even with same email',blocked && readDataOwner().uid === uid);
+  const before = localStorage.getItem(DATA_OWNER_KEY);
+  await applyBackupPackage({format:BACKUP_FORMAT,version:1,keys:{
+    [DATA_OWNER_KEY]:{encoding:'json',value:{uid,email:'fake@test.invalid',profileId:'forged'}},
+    xlife_cloud_uploaded_photos:{encoding:'json',value:['xlife-photo:wrong-cache']},
+    dayflow_active_session:{encoding:'text',value:'false'},
+  },photos:{}});
+  ok('U5 offline metadata cannot replace owner/session/cache',localStorage.getItem(DATA_OWNER_KEY) === before && !localStorage.getItem('xlife_cloud_uploaded_photos') && !localStorage.getItem('dayflow_active_session'));
+  localStorage.clear();
+  await applyBackupPackage({format:BACKUP_FORMAT,version:1,keys:{
+    [DATA_OWNER_KEY]:{encoding:'json',value:{uid,email:'a@test.invalid',profileId:'local-a'}},
+    dayflow_user:{encoding:'json',value:{id:'local-a',email:'a@test.invalid'}},
+    dayflow_log:{encoding:'json',value:{date:TODAY,notes:'restored diary',meals:[],snaps:[]}},
+  },photos:{}});
+  ok('U5 fresh-device offline restore preserves provenance but grants no cloud access',!readDataOwner() && JSON.parse(localStorage.getItem(RESTORE_OWNER_KEY)).uid === uid);
+  blocked = false;
+  try { associateDataOwner({id:foreign,email:'a@test.invalid'}); } catch { blocked = true; }
+  ok('U5 restored provenance denies association to wrong UID',blocked && !readDataOwner());
+  associateDataOwner({id:uid,email:'a@test.invalid'});
+  ok('U5 original restored owner can explicitly associate',readDataOwner().uid === uid);
 }
 
 console.log(results.join("\n"));

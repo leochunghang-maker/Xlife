@@ -1,20 +1,37 @@
-// Local RLS smoke test without Docker: `npm i --no-save embedded-postgres && node supabase/tests/run-embedded.mjs`
-// (needs psql on PATH). Uses a tiny stub of Supabase auth/storage schemas.
-import EmbeddedPostgres from "embedded-postgres";
-import { execSync } from "node:child_process";
-const pg = new EmbeddedPostgres({ databaseDir: ".pgtest-data", user: "postgres", password: "pw", port: 54329, persistent: false });
-await pg.initialise(); await pg.start();
-const env = { ...process.env, PGPASSWORD: "pw" };
-const psql = (f) => execSync(`psql -v ON_ERROR_STOP=1 -h localhost -p 54329 -U postgres -d postgres -f ${f}`, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-try {
-  psql("supabase/tests/supabase_stub.sql");
-  console.log(psql("supabase/migrations/20261113000000_xlife_init.sql").split("\n").filter(l => /ERROR/.test(l)).join("\n") || "migration ok");
-  console.log("re-run:", psql("supabase/migrations/20261113000000_xlife_init.sql") ? "idempotent ok" : "");
-  psql("supabase/migrations/20261113000100_couple_daily_question.sql");
-  console.log(psql("supabase/tests/rls_smoke.sql"));
-} catch (e) {
-  console.log("FAILED", e.stdout?.slice(-1500), e.stderr?.slice(-2500));
-  await pg.stop();
-  process.exit(1);
+// Synthetic isolated RLS tests, no Docker or live Supabase. Requires psql.
+import EmbeddedPostgres from 'embedded-postgres';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const databaseDir = await mkdtemp(join(tmpdir(), 'xlife-sql-'));
+const port = Number(process.env.XLIFE_SQL_PORT || 54329);
+if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid isolated SQL test port');
+const pg = new EmbeddedPostgres({ databaseDir, user: 'postgres', password: 'synthetic-test-password', port, persistent: false });
+let started = false;
+function psql(file) {
+  const out = execFileSync('psql', ['-v','ON_ERROR_STOP=1','-h','127.0.0.1','-p',String(port),'-U','postgres','-d','postgres','-f',file], {
+    env: { ...process.env, PGPASSWORD: 'synthetic-test-password' }, encoding: 'utf8', stdio: ['ignore','pipe','pipe'],
+  });
+  return out;
 }
-await pg.stop();
+try {
+  await pg.initialise(); await pg.start(); started = true;
+  psql('supabase/tests/supabase_stub.sql');
+  const migration = 'supabase/migrations/20261113000000_xlife_init.sql';
+  psql(migration); psql(migration);
+  psql('supabase/migrations/20261113000100_couple_daily_question.sql');
+  const upgrade = 'supabase/migrations/20261119000000_partner_authorization.sql';
+  psql(upgrade); psql(upgrade);
+  // Notices are emitted on stderr; assertions all RAISE on failure and psql's
+  // ON_ERROR_STOP makes that exit nonzero. Log named PASS assertions as SQL rows.
+  console.log(psql('supabase/tests/rls_smoke.sql'));
+  console.log(psql('supabase/tests/security_regression.sql'));
+  console.log('PASS isolated SQL migrations (including upgrade re-run) and authenticated/anon security regressions');
+} catch(error) {
+  console.error('FAIL isolated SQL:', error.message, error.stdout, error.stderr);
+  process.exitCode = 1;
+} finally {
+  if(started) await pg.stop();
+  await rm(databaseDir, { recursive: true, force: true });
+}

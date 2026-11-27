@@ -4,7 +4,7 @@ import { Button } from "../components/ui.jsx";
 import { readLocalJSON } from "../lib/storage";
 import {
   isSupabaseConfigured, getCloudSession, onCloudAuthChange, cloudSignIn, cloudSignUp, cloudSignOut,
-  backupLocalToCloud, restoreFromCloud, createCoupleInvite, acceptCoupleInvite, leaveCouple, getCouple, CLOUD_STATUS_KEY,
+  backupLocalToCloud, restoreFromCloud, createCoupleInvite, acceptCoupleInvite, leaveCouple, getCouple, CLOUD_STATUS_KEY, readDataOwner, associateCurrentCloudOwner,
 } from "../lib/cloud";
 
 export function CloudSettings({ user }) {
@@ -13,19 +13,25 @@ export function CloudSettings({ user }) {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState(() => readLocalJSON(CLOUD_STATUS_KEY, null));
+  const [associated, setAssociated] = useState(() => Boolean(readDataOwner()));
   const [couple, setCouple] = useState(null);
   const [inviteCode, setInviteCode] = useState("");
   const [partnerCode, setPartnerCode] = useState("");
 
   useEffect(() => {
     if (!isSupabaseConfigured) return undefined;
-    getCloudSession().then(setSession);
-    return onCloudAuthChange(setSession);
+    let active = true;
+    const updateSession = next => { if (active) { setSession(next); setCouple(null); setInviteCode(""); } };
+    getCloudSession().then(updateSession);
+    const unsubscribe = onCloudAuthChange(updateSession);
+    return () => { active = false; unsubscribe(); };
   }, []);
 
   useEffect(() => {
-    if (session) getCouple().then(setCouple).catch(() => setCouple(null));
-  }, [session]);
+    let active = true;
+    if (session && associated) getCouple().then(value => { if (active) setCouple(value); }).catch(() => { if (active) setCouple(null); });
+    return () => { active = false; };
+  }, [session, associated]);
 
   if (!isSupabaseConfigured) {
     return (
@@ -84,7 +90,8 @@ export function CloudSettings({ user }) {
   });
   const unpair = () => run("unpair", async () => {
     if (!window.confirm("Unpair from your partner? They will stop seeing anything you shared.")) return;
-    await leaveCouple();
+    const { error } = await leaveCouple();
+    if (error) throw error;
     setCouple(null);
   });
 
@@ -104,10 +111,17 @@ export function CloudSettings({ user }) {
       ) : (
         <>
           <p className="text-sm">Signed in as <b>{session.user.email}</b></p>
-          {status?.lastBackupAt && <p className="text-xs text-zinc-500">Last backup {new Date(status.lastBackupAt).toLocaleString()}</p>}
+          {!associated && <div className="rounded-2xl border border-amber-400 p-3 text-sm">
+            <p>Cloud access is blocked. This phone has existing local data. Only continue if ALL logs, health data and photos on this phone belong to {session.user.email}. Nothing is uploaded until you associate and choose backup.</p>
+            <Button variant="secondary" disabled={!!busy} onClick={() => run("associate", async () => {
+              if (!window.confirm(`Associate ALL existing local data with ${session.user.email}? Only continue if it is yours. This cannot be switched to another account. Export an offline backup first.`)) return;
+              await associateCurrentCloudOwner(); setAssociated(true); setMessage("Data associated. Cloud operations are now available.");
+            })}>Associate this phone’s data</Button>
+          </div>}
+          {status?.userId === session.user.id && status?.lastBackupAt && <p className="text-xs text-zinc-500">Last backup {new Date(status.lastBackupAt).toLocaleString()}</p>}
           <div className="grid grid-cols-2 gap-2">
-            <Button onClick={backup} disabled={!!busy} className="rounded-2xl bg-[hsl(160_50%_45%)] py-3 text-white">{busy === "backup" ? "Backing up…" : "Back up now"}</Button>
-            <Button variant="secondary" onClick={restore} disabled={!!busy} className="rounded-2xl py-3">Restore</Button>
+            <Button onClick={backup} disabled={!!busy || !associated} className="rounded-2xl bg-[hsl(160_50%_45%)] py-3 text-white">{busy === "backup" ? "Backing up…" : "Back up now"}</Button>
+            <Button variant="secondary" onClick={restore} disabled={!!busy || !associated} className="rounded-2xl py-3">Restore</Button>
           </div>
           <div className="rounded-2xl bg-white p-3 dark:bg-zinc-900">
             <p className="text-sm font-bold">Partner</p>
@@ -118,12 +132,12 @@ export function CloudSettings({ user }) {
               </div>
             ) : (
               <div className="mt-2 space-y-2">
-                <Button variant="secondary" onClick={invite} disabled={!!busy} className="w-full rounded-2xl py-3">Create invite code</Button>
-                {inviteCode && <p className="text-center text-2xl font-black tracking-widest" aria-label="Your invite code">{inviteCode}</p>}
+                <Button variant="secondary" onClick={invite} disabled={!!busy || !associated} className="w-full rounded-2xl py-3">Create invite code</Button>
+                {inviteCode && <p className="break-all text-center font-mono text-base font-black tracking-wide" aria-label="Your invite code">{inviteCode}</p>}
                 {inviteCode && <p className="text-center text-xs text-zinc-500">Share this code with your partner. It works once and expires in 7 days.</p>}
                 <div className="grid grid-cols-[1fr_auto] gap-2">
                   <input className="field" placeholder="Partner's code" value={partnerCode} onChange={(e) => setPartnerCode(e.target.value.toUpperCase())} />
-                  <Button onClick={join} disabled={!partnerCode.trim() || !!busy} className="rounded-2xl bg-rose-500 text-white">Join</Button>
+                  <Button onClick={join} disabled={!partnerCode.trim() || !!busy || !associated} className="rounded-2xl bg-rose-500 text-white">Join</Button>
                 </div>
               </div>
             )}

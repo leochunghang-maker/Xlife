@@ -70,6 +70,14 @@ device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
 - Crossing midnight clears `sets[].done` as well as `exercise.done`, while keeping last weights/reps.
 - `npm run test:e2e` now fails the process on any FAIL (unit + browser suites).
 
+## 2d. Cloud authorization / account isolation (stacked on PR #4)
+- Additive migration `20261119000000_partner_authorization.sql`: immutable membership, invitation-only pairing with serialized consent transitions, no direct member rewrites, legacy unproven pairs cannot authorize reads, no broad photo-directory sharing.
+- Private photos require exact owner/record/category references; sensitive/unreferenced images are denied. Partner photos use authenticated downloads, not new bearer URLs.
+- `xlife_data_owner_v1` explicitly associates the whole local dataset in Settings. Mismatched/persisted foreign sessions sign out; unbound data cannot upload/restore/pair. Auth epochs abort stale jobs; requests and local writes are owner-gated.
+- UID-scoped photo-upload caches preserve (but do not trust) the old unscoped cache. Offline restore cannot import authority or silently rebind ownership; fresh-device recovery retains a restricting owner hint.
+- `npm run test:security` actually runs cloud mocks and isolated authenticated/anonymous PostgreSQL tests. See [security model and migration steps](SECURITY_MODEL.md).
+- **Not deployed or enabled. Cloud stays disabled pending review, migration deployment and live verification.** No native verification, Face ID/AI hardening, widgets, HealthKit or release work in this batch.
+
 ## 3. Backlog (what's left)
 
 ### Needs you (credentials / device)

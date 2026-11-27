@@ -17,3 +17,13 @@ CHROME_PATH=/path/to/chrome npm run test:e2e
 - `test4.mjs`: confirmed snap save, Settings export/restore (photos + My foods / Together), rollover clears `sets[].done`
 - `test-cloud.mjs`: build with dummy `VITE_SUPABASE_*` + `VITE_ENABLE_AI_NUTRITION=true`,
   served on port 4174; checks cloud UI appears and AI requires sign-in.
+
+## Cloud/account security (synthetic, no real service)
+
+`npm run test:security` starts/stops its own dummy-config Vite server on 4185,
+runs the existing cloud configuration smoke plus `test-security.mjs`, then
+actually executes `test:sql` against disposable embedded PostgreSQL. Requires
+Chrome and `psql` on PATH. Uses `.invalid` host interception and synthetic
+accounts/tokens; does not enable or deploy cloud/AI. All failures exit nonzero.
+See `docs/SECURITY_MODEL.md` for coverage and limitations. The normal production
+`npm run build` remains local-only without cloud configuration.
