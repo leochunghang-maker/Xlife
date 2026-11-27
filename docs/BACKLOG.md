@@ -78,6 +78,14 @@ device and keeps data in on-device `localStorage`. Nothing syncs to a cloud yet.
 - `npm run test:security` actually runs cloud mocks and isolated authenticated/anonymous PostgreSQL tests. See [security model and migration steps](SECURITY_MODEL.md).
 - **Not deployed or enabled. Cloud stays disabled pending review, migration deployment and live verification.** No native verification, Face ID/AI hardening, widgets, HealthKit or release work in this batch.
 
+## 2e. App-lock / AI hardening (stacked on PR #5)
+- Shared lock-setting subscriptions fix same-session enable/disable. Native App lifecycle + DOM fallback cover best-effort UI shielding, prompt-loop prevention and one-minute relock; failure/cancel remains locked. No guaranteed native screenshot/snapshot protection is claimed.
+- Added CapacitorApp and regenerated SPM wiring; no team/bundle/display-name changes. Physical-device/Xcode verification remains outstanding.
+- Additive `20261121000000_atomic_ai_quota.sql`: atomic JWT-derived per-user UTC-day attempt quota, protected config/counters, historical backfill, no caller owner/limit parameters; DB errors fail closed. `AI_DAILY_LIMIT` env is retired; default 30 lives in `ai_quota_config`.
+- Edge handler bounds streamed bytes before parse, validates decoded JPEG/PNG/WebP headers/dimensions and field types, enforces auth/body/DB/provider deadlines, validates safe provider output, and never logs raw photos/credentials/errors or returns canned estimates.
+- Executable pure/browser lock tests, Deno check/unit tests and actual isolated SQL privilege/concurrency tests. See [LOCK_AI_HARDENING.md](LOCK_AI_HARDENING.md) for limits, migration instructions and honest limitations.
+- **No merge, deployment, live AI/Supabase calls or enablement. Cloud/AI stay disabled pending review and separate live verification.**
+
 ## 3. Backlog (what's left)
 
 ### Needs you (credentials / device)
@@ -216,5 +224,5 @@ If the local `~/dayflow` copy uses the `xlife_` key, reconcile the two before me
 - **AI:**
   - The OpenAI key is a function secret only.
   - JWT is required.
-  - Per-user daily limit (`AI_DAILY_LIMIT`, default 30).
+  - Atomic per-user UTC-day attempt limit (protected `ai_quota_config`, default 30; `AI_DAILY_LIMIT` env retired in pass 5).
   - Strict JSON-schema output, shown as approximate, editable values.
